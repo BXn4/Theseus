@@ -40,9 +40,6 @@ binary-analysis/
 # Desktop build artifacts
 build-desktop/
 
-# Xbox filesystem mount (desktop runtime data)
-xboxfs/
-
 # Local build staging and backup trees (not part of the public source)
 build/git-clean/
 build/thinkpad-patched/

@@ -96,6 +96,34 @@ Output lands under `~/builds/theseus/` by default (override with `BUILDS_ROOT`):
 - `~/builds/theseus/xbox-debug/default.xbe`
 - `~/builds/theseus/xbox-retail/default.xbe`
 
+### Deploying to Xbox Hardware
+
+The Xbox runs the retail build. The dashboard expects two things to be in place: the data folder next to the XBE, and a config folder on `C:\`.
+
+1. **Drop the XBE somewhere on the Xbox HDD**, for example `E:\Dashboards\Theseus\default.xbe`. Anywhere works as long as the data folder lives next to it.
+2. **Copy `xboxfs/Q/` from this repo to that same folder, renamed to `uixdata`.** Final layout:
+   ```
+   E:\Dashboards\Theseus\
+     default.xbe
+     uixdata\
+       Audio\
+       Background\
+       Fonts\
+       Language\
+       Music\
+       Orbs\
+       Screenshots\
+       Skins\
+       System\
+       Xips\
+   ```
+   On Xbox the data folder is named `uixdata`, not `Q`. The `xboxfs/Q/` name only exists for the desktop build's drive-letter virtualization.
+3. **Copy `xboxfs/C/UIX Configs/` to `C:\UIX Configs\` on the Xbox HDD.** This holds the launcher cache and INI configuration the dashboard reads at boot.
+
+If the XBE boots without `uixdata/` next to it or without `C:\UIX Configs\` on the HDD, the dashboard drops into the panic / recovery screen with a crash log explaining what's missing. FTP comes up either way, so you can push the missing folders over the wire and reboot.
+
+`xboxfs/E/` mirrors what a stock Xbox `E:\` looks like (Applications, Dashboards, Emulators, Games, TDATA). It's there so the desktop build has a sane filesystem to enumerate against. On real hardware your Xbox already has `E:\`; nothing to copy.
+
 ### Status
 
 **Complete:**
