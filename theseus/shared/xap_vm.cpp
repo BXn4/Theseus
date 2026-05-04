@@ -254,10 +254,10 @@ void CMemberVarObject::Assign(CObject* pNewObject)
 
 // CMemberFunctionObject: reference to a scripted member function.
 
-CMemberFunctionObject::CMemberFunctionObject(CInstance* pInstance, CFunction* pFunction)
+CMemberFunctionObject::CMemberFunctionObject(CObject* pOwner, CFunction* pFunction)
 {
 	m_obj = objMemberFunction;
-	m_owner = pInstance;
+	m_owner = pOwner;
 	m_function = pFunction;
 }
 
@@ -265,7 +265,7 @@ CMemberFunctionObject::~CMemberFunctionObject() {}
 
 CObject* CMemberFunctionObject::Deref()
 {
-	CRunner runner(m_owner);
+	CRunner runner(m_owner);   // CObject* — no cast needed now
 	runner.SetFunc(m_function);
 	CObject* pObject = runner.Run();
 	Release();
@@ -1095,6 +1095,8 @@ bool CRunner::Step(CObject** ppRetObj)
 			ASSERT(m_sp >= (UINT)(nParam + 1));
 			CObject* pFun = (CVarObject*)m_stack[m_sp - (nParam + 1)];
 			CObject** rgparam = &m_stack[m_sp - nParam];
+
+			if (pFun == NULL) { Error(_T("call on null")); return NULL; }
 
 			if (pFun->m_obj == objFunctionRef)
 			{
