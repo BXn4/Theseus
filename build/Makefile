@@ -482,6 +482,19 @@ MPV_CFLAGS   =
 MPV_LDFLAGS  =
 MPV_DEFINES  =
 
+# CD Audio playback (libmpv, audio-only - no OpenGL render context).
+# Enabled automatically when pkg-config finds libmpv.
+# Disc detection and TOC reading work regardless (platform ioctls only).
+ifeq ($(shell pkg-config --exists mpv 2>/dev/null && echo yes),yes)
+  CDAUDIO_CFLAGS  := $(shell pkg-config --cflags mpv)
+  CDAUDIO_LDFLAGS := $(shell pkg-config --libs mpv)
+  CDAUDIO_DEFINES := -DUIX_CDAUDIO=1
+else
+  CDAUDIO_CFLAGS  :=
+  CDAUDIO_LDFLAGS :=
+  CDAUDIO_DEFINES :=
+endif
+
 DESKTOP_CFLAGS = \
 	-std=c++17 \
 	$(if $(DEBUG),-g -O0,-O2 -DNDEBUG) \
@@ -518,9 +531,11 @@ DESKTOP_CFLAGS = \
 	-Wno-null-conversion \
 	-Wno-c++11-narrowing \
 	$(MPV_DEFINES) \
-	$(MPV_CFLAGS)
+	$(MPV_CFLAGS) \
+	$(CDAUDIO_DEFINES) \
+	$(CDAUDIO_CFLAGS)
 
-DESKTOP_LDFLAGS = $(SDL2_LDFLAGS) $(DESKTOP_PLATFORM_LDFLAGS) $(MPV_LDFLAGS) -lm
+DESKTOP_LDFLAGS = $(SDL2_LDFLAGS) $(DESKTOP_PLATFORM_LDFLAGS) $(MPV_LDFLAGS) $(CDAUDIO_LDFLAGS) -lm
 
 # Toggle: build the desktop with AddressSanitizer to catch UB / UAF
 # at runtime. Use: `make desktop ASAN=1`.
@@ -591,6 +606,7 @@ DESKTOP_SRCS_PLATFORM = \
 	$(THESEUS_SRC)/desktop/desktop_stubs.cpp \
 	$(THESEUS_SRC)/desktop/desktop_nodes.cpp \
 	$(THESEUS_SRC)/desktop/audio_sdl.cpp \
+	$(THESEUS_SRC)/desktop/cdaudio.cpp \
 	$(THESEUS_SRC)/desktop/inspector.cpp \
 	$(THESEUS_SRC)/desktop/menu_bar.cpp \
 	$(THESEUS_SRC)/desktop/xap_editor.cpp \
@@ -673,11 +689,14 @@ WIN64_DIR     = $(BUILDS_ROOT)/desktop-win64
 WIN64_TARGET  = $(WIN64_DIR)/theseus.exe
 WIN64_CXX     = x86_64-w64-mingw32-g++
 
-# libwinpthread-1.dll lives in the toolchain's x86_64-w64-mingw32/bin dir,
-# next to the real (un-symlinked) compiler. Use realpath so this still
-# points at the right brew Cellar after upgrades, instead of following
-# /opt/homebrew/bin/ which is a symlink layer that doesn't have the DLL.
-WIN64_PTHREAD_DLL := $(shell dirname $$(dirname $$(realpath $$(which x86_64-w64-mingw32-gcc 2>/dev/null))))/x86_64-w64-mingw32/bin/libwinpthread-1.dll
+# libwinpthread-1.dll: on macOS/Homebrew it lives in x86_64-w64-mingw32/bin/;
+# on Linux/APT it lives in x86_64-w64-mingw32/lib/. Try bin/ first, fall back
+# to lib/ so both layouts work without manual configuration.
+WIN64_PTHREAD_DLL := $(shell \
+  BASE=$$(dirname $$(dirname $$(realpath $$(which x86_64-w64-mingw32-gcc 2>/dev/null)))) ; \
+  BIN=$$BASE/x86_64-w64-mingw32/bin/libwinpthread-1.dll ; \
+  LIB=$$BASE/x86_64-w64-mingw32/lib/libwinpthread-1.dll ; \
+  if [ -f "$$BIN" ]; then echo $$BIN ; elif [ -f "$$LIB" ]; then echo $$LIB ; fi)
 
 SDL2_MINGW_DIR    ?= $(HOME)/cross/sdl2-mingw
 SDL2_MINGW_INC    = $(SDL2_MINGW_DIR)/SDL2-2.32.10/x86_64-w64-mingw32/include

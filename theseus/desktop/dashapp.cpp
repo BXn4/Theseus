@@ -14,6 +14,7 @@
 #include "camera.h"
 #include "scene_groups.h"
 #include "audio_sdl.h"
+#include "cdaudio.h"
 #include "settingsfile.h"
 extern void PreloadSkinTextures();
 
@@ -141,6 +142,8 @@ HRESULT InitAudio()
 	// Desktop: SDL_mixer audio engine
 	if (DashAudio_Init() < 0)
 		return E_FAIL;
+
+	CdAudio_Init();
 
 	return S_OK;
 }
@@ -626,6 +629,7 @@ void CleanupApp()
 	Locale_Exit();
 	Text_Exit();
 
+	CdAudio_Shutdown();
 	DashAudio_Shutdown();
 
 	delete[] g_szAppDir;

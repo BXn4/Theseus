@@ -534,6 +534,12 @@ CObject* CObject::Dot(CObject* pObj)
 		CObject* pObject = GetMember(pVar->m_text, pVar->m_length);
 		if (pObject != NULL)
 		{
+			if (pObject->m_obj == objFunction)
+			{
+				// Wrap in CMemberFunctionObject so opCall sets m_self correctly.
+				AddRef();
+				return new CMemberFunctionObject(this, (CFunction*)pObject);
+			}
 			pObject->AddRef();
 			return pObject;
 		}
