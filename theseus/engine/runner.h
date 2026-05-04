@@ -54,13 +54,11 @@ public:
 class CMemberFunctionObject : public CObject
 {
 public:
-	CMemberFunctionObject(CInstance* pInstance, CFunction* pFunction);
+	CMemberFunctionObject(CObject* pOwner, CFunction* pFunction);
 	~CMemberFunctionObject();
-
-	CInstance* m_owner;
-	CFunction* m_function;
-
 	CObject* Deref();
+	CObject* m_owner;
+	CFunction* m_function;
 };
 
 
