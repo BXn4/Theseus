@@ -574,9 +574,18 @@ int main(int argc, char* argv[]) {
 #endif
     }
 
-#if !defined(__SANITIZE_ADDRESS__)
-    // ASan installs its own SIGSEGV/SIGBUS handlers that print rich
-    // reports with allocation/deallocation history; ours would eat them.
+
+    // This fixes compilation so it works for both GCC and clang
+#if defined(__SANITIZE_ADDRESS__)
+    #define ASAN_ACTIVE 1
+#elif defined(__has_feature)
+    #if __has_feature(address_sanitizer)
+        #define ASAN_ACTIVE 1
+    #endif
+#endif
+
+#if !defined(ASAN_ACTIVE)
+    // ASan installs its own SIGSEGV/SIGBUS handlers; ours would eat them.
     // Skip our handler entirely on asan builds.
 #  ifdef _WIN32
     SetUnhandledExceptionFilter(WindowsCrashHandler);
@@ -586,6 +595,8 @@ int main(int argc, char* argv[]) {
 #  endif
     signal(SIGABRT, crash_handler);
 #endif
+
+#undef ASAN_ACTIVE // Clean up
 
     // Initialize SDL
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) < 0) {
