@@ -20,7 +20,8 @@ jobs:
           base-devel \
           libdecor  \
           sdl2      \
-          sdl2_mixer
+          sdl2_mixer \
+          mpv
       - name: Build UIX Desktop (Linux)
         run: |
           cd $GITHUB_WORKSPACE/build
