@@ -17,6 +17,7 @@
 #include "node.h"
 #include "runner.h"
 #include "audio_sdl.h"
+#include "cdaudio.h"
 
 // Helper: resolve XAP audio URL to local filesystem path
 // XAP urls look like "Audio/MainAudio/A Button Select.wav" (relative to Q:\)
@@ -56,12 +57,16 @@ public:
 	}
 
 	void Unload() {
+		if (m_loadedUrl && strncmp(m_loadedUrl, "cd:", 3) == 0)
+			CdAudio_Stop();
 		if (m_channel >= 0) { DashAudio_StopChannel(m_channel); m_channel = -1; }
 		if (m_soundHandle >= 0) { DashAudio_FreeSound(m_soundHandle); m_soundHandle = -1; }
 		if (m_isStreaming) { DashAudio_FreeMusic(); m_isStreaming = false; }
 		free(m_loadedUrl);
 		m_loadedUrl = NULL;
 	}
+
+	static bool IsCdUrl(const char* url) { return url && strncmp(url, "cd:", 3) == 0; }
 
 	DECLARE_NODE(CAudioClip, CTimeDepNode)
 	DECLARE_NODE_PROPS()
@@ -110,7 +115,7 @@ public:
 			return;
 		}
 
-		// Handle "cd:" URLs; disc tracks (no-op on desktop, no disc drive)
+		// Handle "cd:N" URLs — CDDA track; CdAudio_Play handles the actual load
 		if (strncmp(m_url, "cd:", 3) == 0) {
 			m_loadedUrl = strdup(m_url);
 			return;
@@ -133,6 +138,18 @@ public:
 	void Play()
 	{
 		LoadIfNeeded();
+
+		if (IsCdUrl(m_loadedUrl)) {
+			int track = atoi(m_loadedUrl + 3);
+			if (track < 1) track = 1;
+			if (CdAudio_Play(track)) {
+				m_transportMode = 1;
+				m_isActive = true;
+				CallFunction(this, _T("onPlay"));
+				CallFunction(this, _T("OnTransportModeChanged"));
+			}
+			return;
+		}
 
 		if (m_isStreaming) {
 			int loops = m_loop ? -1 : 0;
@@ -161,6 +178,16 @@ public:
 
 	void Stop()
 	{
+		if (IsCdUrl(m_loadedUrl)) {
+			CdAudio_Stop();
+			m_transportMode = 0;
+			m_isActive = false;
+			m_progress = 0.0f;
+			CallFunction(this, _T("onStop"));
+			CallFunction(this, _T("OnTransportModeChanged"));
+			return;
+		}
+
 		if (m_isStreaming) {
 			int fadeMs = (m_fade > 0.0f) ? (int)(m_fade * 1000.0f) : 0;
 			DashAudio_StopMusic(fadeMs);
@@ -181,6 +208,15 @@ public:
 	void Pause()
 	{
 		if (m_transportMode != 1) return;
+
+		if (IsCdUrl(m_loadedUrl)) {
+			CdAudio_Pause();
+			m_transportMode = 2;
+			CallFunction(this, _T("onPause"));
+			CallFunction(this, _T("OnTransportModeChanged"));
+			return;
+		}
+
 		if (m_isStreaming)
 			DashAudio_PauseMusic();
 		else if (m_channel >= 0)
@@ -192,6 +228,20 @@ public:
 
 	void PlayOrPause()
 	{
+		if (IsCdUrl(m_loadedUrl)) {
+			if (m_transportMode == 1) {
+				Pause();
+			} else if (m_transportMode == 2) {
+				CdAudio_Resume();
+				m_transportMode = 1;
+				CallFunction(this, _T("onPlay"));
+				CallFunction(this, _T("OnTransportModeChanged"));
+			} else {
+				Play();
+			}
+			return;
+		}
+
 		if (m_transportMode == 1)
 			Pause();
 		else if (m_transportMode == 2) {
@@ -209,19 +259,42 @@ public:
 
 	int getMinutes()
 	{
-		double pos = m_isStreaming ? DashAudio_GetMusicPosition() : 0.0;
+		double pos = IsCdUrl(m_loadedUrl) ? CdAudio_GetPosition()
+		                                  : (m_isStreaming ? DashAudio_GetMusicPosition() : 0.0);
 		return (int)(pos / 60.0);
 	}
 
 	int getSeconds()
 	{
-		double pos = m_isStreaming ? DashAudio_GetMusicPosition() : 0.0;
+		double pos = IsCdUrl(m_loadedUrl) ? CdAudio_GetPosition()
+		                                  : (m_isStreaming ? DashAudio_GetMusicPosition() : 0.0);
 		return ((int)pos) % 60;
 	}
 
 	void Advance(float nSeconds)
 	{
 		CTimeDepNode::Advance(nSeconds);
+
+		if (m_transportMode == 1 && IsCdUrl(m_loadedUrl)) {
+			CdAudio_Update();
+
+			if (m_sendProgress) {
+				int track = atoi(m_loadedUrl + 3);
+				int dur = CdAudio_GetTrackDurationSeconds(track);
+				double pos = CdAudio_GetPosition();
+				m_progress = (dur > 0) ? (float)(pos / dur) : 0.0f;
+				CallFunction(this, _T("OnProgressChanged"));
+			}
+
+			if (!CdAudio_IsPlaying() && !CdAudio_IsPaused()) {
+				m_transportMode = 0;
+				m_isActive = false;
+				m_progress = 1.0f;
+				CallFunction(this, _T("OnEndOfAudio"));
+				CallFunction(this, _T("OnTransportModeChanged"));
+			}
+			return;
+		}
 
 		if (m_transportMode == 1) {
 			if (m_isStreaming) {
@@ -1073,7 +1146,7 @@ class CDiscDrive : public CNode
 public:
 	static CDiscDrive* s_instance;
 
-	CDiscDrive() : m_discType(NULL), m_locked(false) {
+	CDiscDrive() : m_discType(NULL), m_locked(false), m_pollTimer(2.0f) {
 		m_discType = strdup("none");
 		s_instance = this;
 	}
@@ -1082,11 +1155,55 @@ public:
 	DECLARE_NODE_PROPS()
 	DECLARE_NODE_FUNCTIONS()
 	TCHAR* m_discType;
-	bool m_locked;
+	bool   m_locked;
+	float  m_pollTimer;
 
-	int getTrackCount() { return 0; }
-	CStrObject* FormatTotalTime() { return new CStrObject(_T("0:00")); }
-	CStrObject* FormatTrackTime(int) { return new CStrObject(_T("0:00")); }
+	void Advance(float nSeconds) {
+		CNode::Advance(nSeconds);
+		m_pollTimer += nSeconds;
+		if (m_pollTimer < 2.0f) return;
+		m_pollTimer = 0.0f;
+
+		CdAudio_Poll();
+
+		const char* newType;
+		switch (CdAudio_GetDiscType()) {
+			case CD_AUDIO: newType = "Audio"; break;
+			default:       newType = "none";  break;
+		}
+
+		if (m_discType && strcmp(m_discType, newType) == 0) return;
+
+		bool wasNone = !m_discType || strcmp(m_discType, "none") == 0;
+		bool isNone  = strcmp(newType, "none") == 0;
+
+		free(m_discType);
+		m_discType = strdup(newType);
+
+		if (!m_locked) {
+			if (!isNone && wasNone)
+				CallFunction(this, "OnDiscInserted");
+			else if (isNone && !wasNone)
+				CallFunction(this, "OnDiscRemoved");
+		}
+	}
+
+	int getTrackCount() { return CdAudio_GetTrackCount(); }
+
+	CStrObject* FormatTotalTime() {
+		int total = CdAudio_GetTotalDurationSeconds();
+		char buf[16];
+		snprintf(buf, sizeof(buf), "%d:%02d", total / 60, total % 60);
+		return new CStrObject(buf);
+	}
+
+	CStrObject* FormatTrackTime(int track) {
+		int dur = CdAudio_GetTrackDurationSeconds(track);
+		char buf[16];
+		snprintf(buf, sizeof(buf), "%d:%02d", dur / 60, dur % 60);
+		return new CStrObject(buf);
+	}
+
 	void LaunchDisc() {
 		// On real Xbox this reboots into the DVD player app.
 		// On desktop, we intercept and just start the DVD inline player.
@@ -1099,45 +1216,44 @@ public:
 	void OpenTray() {}
 	void CloseTray() {}
 	CStrObject* getArtist() { return new CStrObject; }
-	CStrObject* getTitle() { return new CStrObject; }
+	CStrObject* getTitle()  { return new CStrObject; }
 	CStrObject* getTrackName(int) { return new CStrObject; }
 };
 
 CDiscDrive* CDiscDrive::s_instance = nullptr;
 IMPLEMENT_NODE("DiscDrive", CDiscDrive, CNode)
 
-// Set the disc type from outside the XAP (triggers OnDiscInserted/OnDiscRemoved callbacks)
-// Mirrors the Xbox disc.cpp approach: set m_discType, then CallFunction("OnDiscInserted")
+// Set the disc type from outside the XAP (used by menu_bar for simulation).
+// Video: directly invokes StartDVDPlayer (bypasses XAP, matches prior desktop behaviour).
+// Audio: fires the normal OnDiscInserted callback so the XAP music screen handles it.
+// none : fires OnDiscRemoved (or navigates away from the DVD player if it was active).
 void DiscDrive_SetDiscType(const char* type) {
 	CDiscDrive* dd = CDiscDrive::s_instance;
 	if (!dd) return;
 
-	bool wasNone = (dd->m_discType && strcmp(dd->m_discType, "none") == 0);
-	bool isNone = (strcmp(type, "none") == 0);
+	bool wasNone = !dd->m_discType || strcmp(dd->m_discType, "none") == 0;
+	bool isNone  = strcmp(type, "none") == 0;
 
-	// Update the property
 	if (dd->m_discType) free(dd->m_discType);
 	dd->m_discType = strdup(type);
 
-	// Call the XAP callback directly, just like the Xbox kernel does
-	if (!isNone) {
-		// Skip the Xbox reboot-to-DVD flow entirely.
-		// Just make the DVD player inline visible directly.
+	if (isNone) {
+		if (!wasNone) {
+			CObject* pRoot = (CObject*)g_pObject;
+			if (pRoot) CallFunction(pRoot, "GoToLauncher");
+			fprintf(stderr, "[DiscDrive] discType='none', navigated to launcher\n");
+		}
+	} else if (strcmp(type, "Video") == 0) {
 		CObject* pRoot = (CObject*)g_pObject;
 		if (pRoot) {
 			CallFunction(pRoot, "StartDVDPlayer");
-			fprintf(stderr, "[DiscDrive] discType='%s', called StartDVDPlayer directly\n", type);
+			fprintf(stderr, "[DiscDrive] discType='Video', called StartDVDPlayer\n");
 		}
-	} else if (isNone && !wasNone) {
-		// Skip the Xbox OnDiscRemoved which tries to reboot via theLauncherLevel.
-		// Instead, just hide the DVD player inline and go to the launcher menu.
-		CObject* pRoot = (CObject*)g_pObject;
-		if (pRoot) {
-			// The XAP hides the DVD player by setting theDVDPlayerInline.visible = false
-			// and navigating. We call GoToLauncher which goes to the harddrive menu.
-			CallFunction(pRoot, "GoToLauncher");
-		}
-		fprintf(stderr, "[DiscDrive] discType='none', navigated to launcher\n");
+	} else {
+		// Audio CD (or anything else): let the XAP script decide via OnDiscInserted
+		if (!dd->m_locked)
+			CallFunction(dd, "OnDiscInserted");
+		fprintf(stderr, "[DiscDrive] discType='%s', fired OnDiscInserted\n", type);
 	}
 }
 

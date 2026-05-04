@@ -574,7 +574,7 @@ int main(int argc, char* argv[]) {
 #endif
     }
 
-#if !defined(__has_feature) || !__has_feature(address_sanitizer)
+#if !defined(__SANITIZE_ADDRESS__)
     // ASan installs its own SIGSEGV/SIGBUS handlers that print rich
     // reports with allocation/deallocation history; ours would eat them.
     // Skip our handler entirely on asan builds.
