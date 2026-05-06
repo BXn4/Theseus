@@ -525,6 +525,18 @@ void RenderTitleMaker() {
 
         // Action buttons
         if (ImGui::Button("Save", ImVec2(100, 0))) {
+            // Sanitize before storing so the dashboard's text atlas can
+            // render the result. Lossy on purpose: smart quotes, em
+            // dashes, ™/®/©, emoji, CJK all get normalized or dropped
+            // rather than rendered as tofu boxes.
+            extern int Title_SanitizeName(const char*, char*, size_t);
+            char cleanName[sizeof(s_editName)];
+            Title_SanitizeName(s_editName, cleanName, sizeof(cleanName));
+            if (cleanName[0]) {
+                strncpy(s_editName, cleanName, sizeof(s_editName) - 1);
+                s_editName[sizeof(s_editName) - 1] = '\0';
+            }
+
             VGames_Update(sel.vgIndex, s_editName, s_editTitleID, s_editLaunch,
                           g_vgames.games[sel.vgIndex].drive, s_categories[s_editCategoryIdx]);
             VGames_Save();
@@ -632,13 +644,23 @@ void RenderTitleMaker() {
         // Determine category from filter or default to "Games"
         const char* newCat = (s_filterCategoryIdx >= 0) ? s_categories[s_filterCategoryIdx] : "Games";
 
-        VGames_Add(s_newTitleName, genID, "", "E", newCat);
-        VGames_Save();
-
-        snprintf(s_statusMsg, sizeof(s_statusMsg), "Created: %s (ID: %s)", s_newTitleName, genID);
-        s_statusTime = 3.0f;
-        s_newTitleName[0] = 0;
-        s_needsScan = true;
+        // Run the new title through the same sanitize pass that Save uses
+        // so the dashboard atlas can render it.
+        extern int Title_SanitizeName(const char*, char*, size_t);
+        char cleanNew[sizeof(s_newTitleName)];
+        Title_SanitizeName(s_newTitleName, cleanNew, sizeof(cleanNew));
+        if (!cleanNew[0]) {
+            snprintf(s_statusMsg, sizeof(s_statusMsg),
+                     "Title \"%s\" sanitizes to empty -- pick another", s_newTitleName);
+            s_statusTime = 4.0f;
+        } else {
+            VGames_Add(cleanNew, genID, "", "E", newCat);
+            VGames_Save();
+            snprintf(s_statusMsg, sizeof(s_statusMsg), "Created: %s (ID: %s)", cleanNew, genID);
+            s_statusTime = 3.0f;
+            s_newTitleName[0] = 0;
+            s_needsScan = true;
+        }
     }
     ImGui::SameLine();
 
@@ -1077,6 +1099,43 @@ void RenderTitleMaker() {
             s_needsScan = true;
         }
     }
+
+    // Bulk-cleanup button: re-runs Title_SanitizeName over every existing
+    // games.ini entry. Useful for libraries imported before the sanitize
+    // pipeline existed, or after refining the substitution table -- one
+    // click reconciles the dashboard view to what the atlas can actually
+    // render.
+    ImGui::SameLine();
+    if (ImGui::Button("Fix Names")) {
+        extern int  Title_SanitizeName(const char*, char*, size_t);
+        extern bool Title_NeedsSanitize(const char*);
+        int fixed = 0;
+        for (int i = 0; i < g_vgames.count; i++) {
+            VirtualGame& g = g_vgames.games[i];
+            if (!g.valid) continue;
+            if (!Title_NeedsSanitize(g.name)) continue;
+            char clean[sizeof(g.name)];
+            Title_SanitizeName(g.name, clean, sizeof(clean));
+            if (clean[0] && strcmp(clean, g.name) != 0) {
+                strncpy(g.name, clean, sizeof(g.name) - 1);
+                g.name[sizeof(g.name) - 1] = '\0';
+                fixed++;
+            }
+        }
+        if (fixed > 0) {
+            VGames_Save();
+            VGames_Reload();
+            s_needsScan = true;
+        }
+        snprintf(s_statusMsg, sizeof(s_statusMsg),
+                 fixed > 0 ? "Sanitized %d title%s" : "All titles already clean",
+                 fixed, fixed == 1 ? "" : "s");
+        s_statusTime = 4.0f;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Re-run name sanitization across every games.ini entry.\n"
+                          "Strips smart quotes, em dashes, ™/®/©, emoji, CJK\n"
+                          "down to what the dashboard's text atlas can render.");
 
     // File browser callbacks
     s_iconBrowser.Display();
