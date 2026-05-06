@@ -1811,24 +1811,35 @@ static void EnumerateTitles()
 		snprintf(xboxMetaPath, sizeof(xboxMetaPath), "E:\\UDATA\\%s\\TitleMeta.xbx", entName);
 		if (!ParseXboxMetaValue(xboxMetaPath, "TitleName", title.titleName, sizeof(title.titleName)))
 			strncpy(title.titleName, entName, sizeof(title.titleName) - 1);
-		snprintf(title.imagePath, sizeof(title.imagePath), "%s/TitleImage.xbx", titlePath);
-		title.hasImage = (access(title.imagePath, F_OK) == 0);
-		// Synthetic UDATA entries from Title Maker don't ship a
-		// TitleImage.xbx (we'd need to encode DXT1 ourselves). Fall
-		// back to Configs/icons/<TitleID>.{jpg,png} -- already what
-		// every other dashboard surface uses for title icons.
-		if (!title.hasImage) {
-			char fallback[1024];
-			snprintf(fallback, sizeof(fallback), "Configs/icons/%s.jpg", entName);
-			if (access(fallback, F_OK) == 0) {
-				strncpy(title.imagePath, fallback, sizeof(title.imagePath) - 1);
-				title.imagePath[sizeof(title.imagePath) - 1] = '\0';
+		// imagePath is stored as an Xbox-style path (E:\UDATA\... or
+		// C:\icons\...) because the rendering pipeline runs it through
+		// MakeAbsoluteURL, which only treats a URL as already-absolute
+		// when it contains a colon. A host-style path like
+		// "Library/UDATA/.../TitleImage.xbx" would otherwise get
+		// prepended with g_szCurDir (currently Q:\Xips\Memory_Files2\
+		// during the Memory scene) and resolve to the wrong tree.
+		// We do the access() probes against host-style forms and only
+		// commit the Xbox-style equivalent into imagePath on success.
+		title.hasImage = false;
+		char hostProbe[1024];
+		snprintf(hostProbe, sizeof(hostProbe), "%s/TitleImage.xbx", titlePath);
+		if (access(hostProbe, F_OK) == 0) {
+			snprintf(title.imagePath, sizeof(title.imagePath),
+			         "E:\\UDATA\\%s\\TitleImage.xbx", entName);
+			title.hasImage = true;
+		} else {
+			// Synthetic UDATA entries fall back to Configs/icons/<TitleID>.
+			// xboxfs.h's C: routing maps "C:\icons\..." -> "Configs/icons/...".
+			snprintf(hostProbe, sizeof(hostProbe), "Configs/icons/%s.jpg", entName);
+			if (access(hostProbe, F_OK) == 0) {
+				snprintf(title.imagePath, sizeof(title.imagePath),
+				         "C:\\icons\\%s.jpg", entName);
 				title.hasImage = true;
 			} else {
-				snprintf(fallback, sizeof(fallback), "Configs/icons/%s.png", entName);
-				if (access(fallback, F_OK) == 0) {
-					strncpy(title.imagePath, fallback, sizeof(title.imagePath) - 1);
-					title.imagePath[sizeof(title.imagePath) - 1] = '\0';
+				snprintf(hostProbe, sizeof(hostProbe), "Configs/icons/%s.png", entName);
+				if (access(hostProbe, F_OK) == 0) {
+					snprintf(title.imagePath, sizeof(title.imagePath),
+					         "C:\\icons\\%s.png", entName);
 					title.hasImage = true;
 				}
 			}
@@ -2178,10 +2189,18 @@ public:
 			// Render title pod
 			if (bRender && y - 0.25f < 0.5f && m_pod) {
 				static char szPodImg[512];
-				if (nTitle >= 0 && nTitle < s_titleCount && s_titles[nTitle].hasImage)
-					snprintf(szPodImg, sizeof(szPodImg), "E:\\UDATA\\%s\\TitleImage.xbx", s_titles[nTitle].titleID);
-				else
+				if (nTitle >= 0 && nTitle < s_titleCount && s_titles[nTitle].hasImage) {
+					// imagePath is already host-relative (set in
+					// ProcessTitleEntry) -- either Library/UDATA/.../TitleImage.xbx
+					// for real Xbox saves or Configs/icons/<TitleID>.{jpg,png}
+					// for synthesized title pods. Pass it through directly
+					// instead of rebuilding an Xbox-style path that only
+					// resolves for the .xbx case.
+					strncpy(szPodImg, s_titles[nTitle].imagePath, sizeof(szPodImg) - 1);
+					szPodImg[sizeof(szPodImg) - 1] = 0;
+				} else {
 					strcpy(szPodImg, "xboxlogo128.xbx");
+				}
 				g_szCurTitleImage = szPodImg;
 				D3DXMatrixTranslation(&mat2, -0.3292f, y, -0.0271f);
 				D3DXMatrixMultiply(&mat2, &mat, &mat2);
@@ -2346,8 +2365,12 @@ public:
 		LoadDesktopIcons();
 		static char imgPath[512];
 		if (m_curTitle >= 0 && m_curTitle < s_titleCount && s_titles[m_curTitle].hasImage) {
-			// UDATA title image
-			snprintf(imgPath, sizeof(imgPath), "E:\\UDATA\\%s\\TitleImage.xbx", s_titles[m_curTitle].titleID);
+			// imagePath was set in ProcessTitleEntry to either the real
+			// TitleImage.xbx or the Configs/icons/<TitleID>.{jpg,png}
+			// fallback. Pass it through directly so synthesized titles
+			// surface their JPG icons here too.
+			strncpy(imgPath, s_titles[m_curTitle].imagePath, sizeof(imgPath) - 1);
+			imgPath[sizeof(imgPath) - 1] = 0;
 			g_szSelTitleImage = imgPath;
 		} else if (m_curTitle >= s_titleCount && m_curTitle < s_titleCount + s_iconCount) {
 			// Desktop icon entry (from Icons.ini via VGames)
