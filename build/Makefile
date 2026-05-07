@@ -835,7 +835,7 @@ WIN64_LDFLAGS = \
 	-lglew32 \
 	-lmpv -lcurl \
 	-lopengl32 -lgdi32 -limm32 -lole32 -loleaut32 -lsetupapi -lversion -lwinmm -luuid \
-	-lws2_32 -ldbghelp
+	-lws2_32 -ldbghelp -lavrt -ldwmapi
 
 # Same source list as desktop -- the compiler reads the same files.
 WIN64_OBJS = $(patsubst $(THESEUS_SRC)/%.cpp,$(WIN64_DIR)/%.o,$(DESKTOP_ALL_SRCS))

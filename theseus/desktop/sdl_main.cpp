@@ -33,6 +33,8 @@
 #include <direct.h>
 #include <process.h>
 #include <dbghelp.h>
+#include <avrt.h>
+#include <dwmapi.h>
 #pragma comment(lib, "dbghelp.lib")
 
 // Watchdog: dumps main thread stack to hang_dump.txt after 10s of detected hang
@@ -710,6 +712,27 @@ int main(int argc, char* argv[]) {
         freopen("CONOUT$", "w", stdout);
         freopen("CONOUT$", "w", stderr);
         freopen("CONIN$", "r", stdin);
+    }
+
+    //Milenko-Testing: I don't run windows, i googled this. don't know if it will work as intended.
+    SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
+    DwmEnableMMCSS(TRUE);
+    {
+        DWORD taskIdx = 0;
+        AvSetMmThreadCharacteristicsW(L"Games", &taskIdx);
+    }
+    typedef BOOL (WINAPI *SetProcessInfoFn)(HANDLE, PROCESS_INFORMATION_CLASS, LPVOID, DWORD);
+    HMODULE hKernel = GetModuleHandleA("kernel32.dll");
+    if (hKernel) {
+        SetProcessInfoFn pSetProcessInformation =
+            (SetProcessInfoFn)GetProcAddress(hKernel, "SetProcessInformation");
+        if (pSetProcessInformation) {
+            PROCESS_POWER_THROTTLING_STATE pt = {0};
+            pt.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+            pt.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+            pt.StateMask = 0; // 0 == opt out of throttling
+            pSetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &pt, sizeof(pt));
+        }
     }
 #endif
 
