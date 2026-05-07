@@ -325,6 +325,12 @@ bool   MediaPlayer_HasVideo() { return s_hasVideo; }
 void MediaPlayer_Update() {
     if (!s_mpv) return;
 
+    // Natural EOF on a prior tick; tear down so we stop pumping.
+    if (s_state == MP_STOPPED) {
+        MediaPlayer_Stop();
+        return;
+    }
+
     // Process mpv events
     while (1) {
         mpv_event* event = mpv_wait_event(s_mpv, 0);

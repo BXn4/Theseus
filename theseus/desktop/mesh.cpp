@@ -147,10 +147,7 @@ bool CMesh::Load(const TCHAR *szFilePath)
     {
         hFile = TheseusCreateFile(szFilePath, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
         if (hFile == INVALID_HANDLE_VALUE)
-        {
-            TRACE("\001[Mesh] Cannot load MeshNode: %s\n", szFilePath);
             return false;
-        }
 
     }
 

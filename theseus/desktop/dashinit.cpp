@@ -140,18 +140,7 @@ void DashInit()
 	// Initialize skin system
 	InitSkin();
 
-	// Init networking
-	if (net::init())
-	{
-		IN_ADDR addr = {net::getAddress()};
-		char ipStr[16];
-		XNetInAddrToString(addr, ipStr, sizeof(ipStr));
-		TRACE("Network Up. IP: %S\n", ipStr);
-	}
-	else
-	{
-		TRACE("Network failed to initialize.\n");
-	}
+	// No net::init() on desktop; FTP/IP belong to the Xbox path.
 
 	// Start Discord relay if enabled
 	InitDiscord();
