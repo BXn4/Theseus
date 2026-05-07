@@ -113,6 +113,8 @@ volatile DWORD g_hangStartTime = 0;
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_opengl3.h"
 #include "imfilebrowser.h"
+#include "embedded_assets.h"
+
 // stb_image for Title Maker icon preview (implementation compiled here)
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
@@ -267,15 +269,16 @@ static bool   s_softRestartPending = false; // reinit after game exits
 // Audio mute state (Ctrl+M toggle, auto-muted during game launch)
 bool g_audioMuted = false;       // user choice (Ctrl+M)
 bool g_windowFocused = true;     // SDL focus state
-// Effective mute is the OR of the user choice and the focus state: silent
-// while the window is in the background or minimized, audible while it has
-// focus. Manual Ctrl+M overrides on top of that and stays muted regardless.
+// Mute ambient (SDL_mixer) when: user pressed Ctrl+M, window unfocused, or
+// media is playing. mpv runs through its own audio out, unaffected by this.
 static void ApplyEffectiveMute()
 {
-    bool shouldMute = g_audioMuted || !g_windowFocused;
+    extern bool g_mediaFullscreen;
+    bool shouldMute = g_audioMuted || !g_windowFocused || g_mediaFullscreen;
     if (shouldMute) DashAudio_MuteAll();
     else            DashAudio_UnmuteAll();
 }
+void ApplyEffectiveMute_Public() { ApplyEffectiveMute(); }
 bool g_startMinimized = false;
 bool g_graphicsDebug = false;
 float g_muteOverlayTimer = 0.0f; // seconds remaining to show the overlay toast
@@ -847,6 +850,21 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
         return 1;
+    }
+
+    // Window icon (TeamUIX logo, embedded).
+    {
+        int iw, ih, ich;
+        unsigned char *px = stbi_load_from_memory(teamuix_png, (int)teamuix_png_len, &iw, &ih, &ich, 4);
+        if (px) {
+            SDL_Surface *ico = SDL_CreateRGBSurfaceFrom(px, iw, ih, 32, iw * 4,
+                0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000);
+            if (ico) {
+                SDL_SetWindowIcon(g_pSDLWindow, ico);
+                SDL_FreeSurface(ico);
+            }
+            stbi_image_free(px);
+        }
     }
 
     // Create OpenGL context

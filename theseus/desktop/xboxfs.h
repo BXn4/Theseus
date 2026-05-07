@@ -506,35 +506,15 @@ struct XboxFSFindHandle {
     int  vgPos;
 };
 
-// Pull a virtual-game folder list for a translated path that looks like
-// "<...>\xboxfs\<DRIVE>\<CATEGORY>". Sets ffh->vgIndices/vgCount/0; leaves
-// vgCount = 0 if the path doesn't match the game-category shape or no
-// games.ini entries point at this drive+category.
+// Inject virtual games for a translated dirPath. Shared with POSIX.
 inline void XboxFS_PopulateVirtualGames(XboxFSFindHandle* ffh, const char* dirPath) {
     ffh->vgCount = 0;
     ffh->vgPos = 0;
-    // Find "xboxfs" segment, then the next two components are drive + category.
-    const char* xfs = strstr(dirPath, "xboxfs");
-    if (!xfs) return;
-    const char* p = xfs + 6;
-    if (*p != '\\' && *p != '/') return;
-    p++;
-    char drive[4] = {};
-    int di = 0;
-    while (*p && *p != '\\' && *p != '/' && di < 3) drive[di++] = *p++;
-    if (*p != '\\' && *p != '/') return;
-    p++;
-    char cat[32] = {};
-    int ci = 0;
-    while (*p && *p != '\\' && *p != '/' && ci < 31) cat[ci++] = *p++;
-    // Only inject for known game categories.
-    static const char* gameCats[] = { "Games", "Applications", "Apps", "Homebrew", "Emulators", "Dashboards" };
-    for (int gc = 0; gc < 6; gc++) {
-        if (_stricmp(cat, gameCats[gc]) == 0) {
-            ffh->vgCount = VGames_GetForDirectory(drive, cat, ffh->vgIndices, VGAMES_MAX);
-            return;
-        }
-    }
+
+    char drive[2] = {0};
+    char cat[32] = {0};
+    if (!VGames_ParseDir(dirPath, drive, cat, sizeof(cat))) return;
+    ffh->vgCount = VGames_GetForDirectory(drive, cat, ffh->vgIndices, VGAMES_MAX);
 }
 
 // Returns the next virtual-game entry that (a) matches the pattern and

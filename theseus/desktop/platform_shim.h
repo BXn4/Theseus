@@ -375,28 +375,18 @@ inline HANDLE FindFirstFile(const char* path, WIN32_FIND_DATA* fd) {
     strncpy(ffh->pattern, patBuf, sizeof(ffh->pattern) - 1);
     ffh->pattern[sizeof(ffh->pattern) - 1] = '\0';
 
-    // Check if this is a game directory scan; inject virtual entries.
-    // Detect pattern: Library/{category}  (e.g. "Library/Games"). Library
-    // collapses E:, F:, G: on desktop -- virtual games always reference
-    // drive E for VGames_GetForDirectory.
+    // Inject virtual games via shared VGames_ParseDir.
     ffh->vgCount = 0;
     ffh->vgPos = 0;
     ffh->vgDrive[0] = 0;
     ffh->vgCategory[0] = 0;
     {
-        char driveBuf[4] = "E";
-        char catBuf[32] = {};
-        if (sscanf(dirBuf, "Library/%31[^/]", catBuf) == 1) {
-            // Check if this is a game-related category
-            const char* gameCats[] = { "Games", "Applications", "Apps", "Homebrew", "Emulators", "Dashboards" };
-            for (int gc = 0; gc < 6; gc++) {
-                if (strcasecmp(catBuf, gameCats[gc]) == 0) {
-                    strncpy(ffh->vgDrive, driveBuf, sizeof(ffh->vgDrive) - 1);
-                    strncpy(ffh->vgCategory, catBuf, sizeof(ffh->vgCategory) - 1);
-                    ffh->vgCount = VGames_GetForDirectory(driveBuf, catBuf, ffh->vgIndices, VGAMES_MAX);
-                    break;
-                }
-            }
+        char driveBuf[4] = {0};
+        char catBuf[32] = {0};
+        if (VGames_ParseDir(dirBuf, driveBuf, catBuf, sizeof(catBuf))) {
+            strncpy(ffh->vgDrive, driveBuf, sizeof(ffh->vgDrive) - 1);
+            strncpy(ffh->vgCategory, catBuf, sizeof(ffh->vgCategory) - 1);
+            ffh->vgCount = VGames_GetForDirectory(driveBuf, catBuf, ffh->vgIndices, VGAMES_MAX);
         }
     }
 

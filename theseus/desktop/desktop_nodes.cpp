@@ -3913,11 +3913,12 @@ public:
 		// MediaPlayer_Open is idempotent and will lazily call MediaPlayer_Init
 		// when the previous Stop tore the pipeline down.
 		if (!MediaPlayer_Open(path)) return;
-		DashAudio_MuteAll();
 		extern bool g_mediaFullscreen;
 		extern char g_mediaFullscreenTitle[256];
 		extern char g_mediaFullscreenSubtitle[256];
+		extern void ApplyEffectiveMute_Public();
 		g_mediaFullscreen = true;
+		ApplyEffectiveMute_Public();
 		strncpy(g_mediaFullscreenTitle, displayTitle ? displayTitle : "", sizeof(g_mediaFullscreenTitle) - 1);
 		g_mediaFullscreenTitle[sizeof(g_mediaFullscreenTitle) - 1] = 0;
 		strncpy(g_mediaFullscreenSubtitle, displaySubtitle ? displaySubtitle : "", sizeof(g_mediaFullscreenSubtitle) - 1);

@@ -60,7 +60,7 @@ bool BootAnim_PlayAndWait(SDL_Window* win, const char* path)
 	mpv_set_option_string(mpv, "keep-open",  "no");      // exit-eof so END_FILE fires
 	mpv_set_option_string(mpv, "video",      "yes");
 	mpv_set_option_string(mpv, "audio",      "yes");
-	mpv_set_option_string(mpv, "ao",         "coreaudio");
+	mpv_set_option_string(mpv, "ao",         "coreaudio,wasapi,pulse,sdl");
 	mpv_set_option_string(mpv, "volume",     "100");
 	mpv_set_option_string(mpv, "mute",       "no");
 	mpv_set_option_string(mpv, "osc",        "no");

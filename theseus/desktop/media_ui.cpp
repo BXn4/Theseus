@@ -330,8 +330,9 @@ void MediaUI_StopFullscreen()
 {
     if (!g_mediaFullscreen) return;
     MediaPlayer_Stop();
-    DashAudio_UnmuteAll();
     g_mediaFullscreen = false;
+    extern void ApplyEffectiveMute_Public();
+    ApplyEffectiveMute_Public();
     g_mediaFullscreenTitle[0] = 0;
     g_mediaFullscreenSubtitle[0] = 0;
     // Pulse the XAP wrapper so the action menu re-runs ShowMediaActionMenu().

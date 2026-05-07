@@ -131,8 +131,8 @@ bool MediaPlayer_Init() {
     mpv_set_option_string(s_mpv, "hwdec", "no");           // software decode - avoids GL texture errors on macOS core profile
     mpv_set_option_string(s_mpv, "keep-open", "yes");
     mpv_set_option_string(s_mpv, "video", "yes");
-    mpv_set_option_string(s_mpv, "terminal", "yes");     // enable mpv log output
-    mpv_set_option_string(s_mpv, "msg-level", "all=v");  // verbose logging
+    mpv_set_option_string(s_mpv, "terminal", "no");
+    mpv_set_option_string(s_mpv, "msg-level", "all=error");
     mpv_set_option_string(s_mpv, "osc", "no");
 
     if (mpv_initialize(s_mpv) < 0) {

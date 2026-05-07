@@ -1616,7 +1616,9 @@ public:
     DWORD m_srcBlend, m_destBlend;
     bool m_zEnable;
     bool m_zWriteEnable;
+    DWORD m_zFunc;
     DWORD m_cullMode;
+    DWORD m_fillMode;
     bool m_lighting;
     bool m_colorVertex;
 public:
@@ -1662,8 +1664,8 @@ private:
 public:
     IDirect3DDevice8() : m_ref(1), m_fvf(0), m_streamVB(NULL), m_streamIB(NULL), m_streamStride(0), m_baseVertex(0), m_wvpDirty(true), m_matDiffuse(0xFFFFFFFF), m_texFactor(0xFFFFFFFF), m_falloffFront{1,1,1,1}, m_falloffDelta{0,0,0,0}, m_normalInv{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1}, m_envMapMode(false),
         m_effectShaderActive(false),
-        m_alphaBlendEnable(true), m_srcBlend(D3DBLEND_SRCALPHA), m_destBlend(D3DBLEND_INVSRCALPHA),
-        m_zEnable(false), m_zWriteEnable(false), m_cullMode(D3DCULL_NONE), m_lighting(false), m_colorVertex(false),
+        m_alphaBlendEnable(false), m_srcBlend(0xFFFFFFFF), m_destBlend(0xFFFFFFFF),
+        m_zEnable(false), m_zWriteEnable(true), m_zFunc(0xFFFFFFFF), m_cullMode(D3DCULL_NONE), m_fillMode(0xFFFFFFFF), m_lighting(false), m_colorVertex(false),
         m_dbgMatName("(none)"), m_drawRecordCount(0), m_inspectorHitID(-1), m_mouseX(0), m_mouseY(0), m_inspectorEnabled(false), m_inspectorCurrentNode(NULL), m_inspectorSelectedNode(NULL), m_frameDrawCalls(0), m_frameNumber(0),
         m_tss0ColorOp(D3DTOP_DISABLE), m_tss0ColorArg1(D3DTA_TEXTURE), m_tss0ColorArg2(D3DTA_CURRENT),
         m_tss0AlphaOp(D3DTOP_DISABLE), m_tss0AlphaArg1(D3DTA_TEXTURE), m_tss0AlphaArg2(D3DTA_CURRENT),
@@ -1754,32 +1756,43 @@ public:
     HRESULT SetRenderState(DWORD state, DWORD value) {
         if (state == D3DRS_TEXTUREFACTOR) m_texFactor = (D3DCOLOR)value;
         else if (state == D3DRS_ALPHABLENDENABLE) {
-            m_alphaBlendEnable = (value != 0);
-            if (value) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+            bool nv = (value != 0);
+            if (nv == m_alphaBlendEnable) return S_OK;
+            m_alphaBlendEnable = nv;
+            if (nv) glEnable(GL_BLEND); else glDisable(GL_BLEND);
         }
         else if (state == D3DRS_SRCBLEND) {
+            if (value == m_srcBlend) return S_OK;
             m_srcBlend = value;
             ApplyBlendFunc();
         }
         else if (state == D3DRS_DESTBLEND) {
+            if (value == m_destBlend) return S_OK;
             m_destBlend = value;
             ApplyBlendFunc();
         }
         else if (state == D3DRS_ZENABLE) {
-            m_zEnable = (value != 0);
-            if (value) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+            bool nv = (value != 0);
+            if (nv == m_zEnable) return S_OK;
+            m_zEnable = nv;
+            if (nv) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
         }
         else if (state == D3DRS_ZWRITEENABLE) {
-            m_zWriteEnable = (value != 0);
-            glDepthMask(value ? GL_TRUE : GL_FALSE);
+            bool nv = (value != 0);
+            if (nv == m_zWriteEnable) return S_OK;
+            m_zWriteEnable = nv;
+            glDepthMask(nv ? GL_TRUE : GL_FALSE);
         }
         else if (state == D3DRS_ZFUNC) {
+            if (value == m_zFunc) return S_OK;
+            m_zFunc = value;
             GLenum func = GL_LEQUAL;
             if (value == D3DCMP_LESS) func = GL_LESS;
             else if (value == D3DCMP_ALWAYS) func = GL_ALWAYS;
             glDepthFunc(func);
         }
         else if (state == D3DRS_CULLMODE) {
+            if (value == m_cullMode) return S_OK;
             m_cullMode = value;
             if (value == D3DCULL_NONE) glDisable(GL_CULL_FACE);
             else {
@@ -1788,6 +1801,8 @@ public:
             }
         }
         else if (state == D3DRS_FILLMODE) {
+            if (value == m_fillMode) return S_OK;
+            m_fillMode = value;
             glPolygonMode(GL_FRONT_AND_BACK, value == D3DFILL_WIREFRAME ? GL_LINE : GL_FILL);
         }
         else if (state == D3DRS_LIGHTING) {
@@ -2359,8 +2374,11 @@ public:
         // Upload indices to dynamic IBO and draw
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_gl.dynamicIBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, idxCount * sizeof(GLuint), triIdx, GL_STREAM_DRAW);
-        // Clear any accumulated GL errors before draw
+#ifndef NDEBUG
+        // Pre-draw glGetError flushes the pipeline; only worth the cost in
+        // debug builds where we actually inspect errors.
         while (glGetError() != GL_NO_ERROR) {}
+#endif
         glDrawElements(GL_TRIANGLES, idxCount, GL_UNSIGNED_INT, 0);
         free(triIdx);
         m_frameDrawCalls++;

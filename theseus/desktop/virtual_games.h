@@ -224,6 +224,39 @@ inline int VGames_MatchFolder(const char* localPath) {
     return -1;
 }
 
+// Parse "Library/Games" / "Data/Apps" etc. into drive + category. Used
+// by both the Win32 and POSIX FindFirstFile shims.
+inline bool VGames_ParseDir(const char* dirPath, char* outDrive, char* outCat, size_t catLen) {
+    if (!dirPath || !outDrive || !outCat || catLen < 2) return false;
+    static const struct { const char* prefix; char drive; } kMap[] = {
+        { "Library", 'E' }, { "Data", 'Q' }, { "Configs", 'C' }
+    };
+    const char* p = NULL;
+    outDrive[0] = 0;
+    for (size_t i = 0; i < sizeof(kMap) / sizeof(kMap[0]); i++) {
+        const char* hit = strstr(dirPath, kMap[i].prefix);
+        if (!hit) continue;
+        size_t plen = strlen(kMap[i].prefix);
+        if (hit[plen] != '\\' && hit[plen] != '/') continue;
+        outDrive[0] = kMap[i].drive;
+        outDrive[1] = 0;
+        p = hit + plen + 1;
+        break;
+    }
+    if (!p) return false;
+
+    size_t ci = 0;
+    while (*p && *p != '\\' && *p != '/' && ci < catLen - 1)
+        outCat[ci++] = *p++;
+    outCat[ci] = 0;
+
+    static const char* gameCats[] = { "Games", "Applications", "Apps", "Homebrew", "Emulators", "Dashboards" };
+    for (size_t i = 0; i < sizeof(gameCats) / sizeof(gameCats[0]); i++) {
+        if (strcasecmp(outCat, gameCats[i]) == 0) return true;
+    }
+    return false;
+}
+
 // Get virtual games that belong to a specific drive+category directory
 // Used by FindFirstFile/FindNextFile to inject virtual entries
 inline int VGames_GetForDirectory(const char* drive, const char* category,
