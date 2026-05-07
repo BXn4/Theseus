@@ -11,6 +11,7 @@
 #include "xip.h"
 #include "file_util.h"
 #include "xbx_texture.h"
+#include "skin_assets.h"
 
 inline void D3D_FreeNoncontiguousMemory(void *pMemory) { free(pMemory); }
 
@@ -88,6 +89,49 @@ LPDIRECT3DTEXTURE8 LoadTexture(const char *szURL, unsigned int width, unsigned i
 	char szBuf[MAX_PATH];
 	MakeAbsoluteURL(szBuf, szURL);
 
+	CActiveFile file;
+
+	// === Skin override first ===
+	// Skin authors expect their custom .xbx files to replace the XIP
+	// defaults; if XIP wins (the previous order) skin overrides only
+	// fire for assets the XIP doesn't ship, which silently breaks
+	// every skin that retextures cellwall, hilites, panels, etc.
+	//
+	// Gated on IsSkinnableAsset so we only probe the skin folder
+	// for files that are actually part of the skinnable surface.
+	// Random texture refs (icons, scene-specific art, etc.) skip
+	// the skin lookup entirely and go straight to XIP.
+	if (g_sSkinDir)
+	{
+		char OverrideName[MAX_PATH];
+		strcpy(OverrideName, szURL);
+
+		char *ext = strrchr(OverrideName, '.');
+		if (ext != NULL)
+			strcpy(ext + 1, "xbx"); // force .xbx extension for override
+
+		if (IsSkinnableAsset(OverrideName))
+		{
+			// Probe every member of the equivalence group. A UI.X-era
+			// skin that only ships menu_hilite.xbx will satisfy a retail
+			// XAP request for GameHilite_01.xbx via SkinCandidatesFor.
+			const char *candidates[4];
+			int nCandidates = SkinCandidatesFor(OverrideName, candidates, 4);
+			for (int i = 0; i < nCandidates; i++)
+			{
+				char SkinPath[MAX_PATH];
+				sprintf(SkinPath, "%s%s", g_sSkinDir, candidates[i]);
+
+				if (!file.Fetch(SkinPath, true))
+					continue;
+
+				LPDIRECT3DTEXTURE8 lpTexture = ParseTexture(SkinPath, file.GetContent(), file.GetContentLength(), width, height);
+				if (lpTexture != NULL)
+					return lpTexture;
+			}
+		}
+	}
+
 	// === XIP lookup using forced .xbx extension ===
 	char *pch = strrchr(szBuf, '.');
 	if (pch != NULL)
@@ -96,47 +140,6 @@ LPDIRECT3DTEXTURE8 LoadTexture(const char *szURL, unsigned int width, unsigned i
 		LPDIRECT3DTEXTURE8 lpTexture = (LPDIRECT3DTEXTURE8)FindObjectInXIP(szBuf, szURL, XIP_TYPE_TEXTURE);
 		if (lpTexture != NULL)
 			return lpTexture;
-	}
-
-	CActiveFile file;
-
-	// === Try override from skin directory using .xbx ===
-	if (g_sSkinDir)
-	{
-		char SkinPath[MAX_PATH];
-		char OverrideName[MAX_PATH];
-		strcpy(OverrideName, szURL);
-
-		char *ext = strrchr(OverrideName, '.');
-		if (ext != NULL)
-			strcpy(ext + 1, "xbx"); // force .xbx extension for override
-
-		sprintf(SkinPath, "%s%s", g_sSkinDir, OverrideName);
-
-		if (file.Fetch(SkinPath, true))
-		{
-			char *skinExt = strrchr(SkinPath, '.');
-			if (skinExt && (strcasecmp(skinExt, ".tga") == 0 || strcasecmp(skinExt, ".bmp") == 0 || strcasecmp(skinExt, ".dds") == 0))
-			{
-				// Use D3DXCreateTextureFromFileA for standard formats
-				char ansiPath[MAX_PATH];
-				Ansi(ansiPath, SkinPath, MAX_PATH);
-				LPDIRECT3DTEXTURE8 lpTexture = NULL;
-				if (SUCCEEDED(D3DXCreateTextureFromFileA(TheseusGetD3DDev(), ansiPath, &lpTexture)))
-				{
-					return lpTexture;
-				}
-			}
-			else
-			{
-				// Use ParseTexture for .xbx or custom formats
-				LPDIRECT3DTEXTURE8 lpTexture = ParseTexture(SkinPath, file.GetContent(), file.GetContentLength(), width, height);
-				if (lpTexture != NULL)
-				{
-					return lpTexture;
-				}
-			}
-		}
 	}
 
 	// === Fallback: Try original path with original extension ===
@@ -161,25 +164,12 @@ LPDIRECT3DTEXTURE8 LoadTexture(const char *szURL, unsigned int width, unsigned i
 		}
 	}
 
-	// === FINAL fallback: Load "menu_hilite.xbx" from skin directory ===
-	if (g_sSkinDir)
-	{
-
-		char FallbackPath[MAX_PATH];
-		sprintf(FallbackPath, "%smenu_hilight.xbx", g_sSkinDir);
-
-		if (file.Fetch(FallbackPath, true))
-		{
-			LPDIRECT3DTEXTURE8 lpTexture = ParseTexture(FallbackPath, file.GetContent(), file.GetContentLength(), width, height);
-			if (lpTexture != NULL)
-			{
-				ALERT("Fallback texture loaded: menu_hilite.xbx");
-				return lpTexture;
-			}
-		}
-	}
-
-	ALERT("Unable to load texture file (%s) and fallback failed", szURL);
+	// No final fallback. Returning menu_hilight.xbx for any missing
+	// texture poisoned mesh UVs across the dashboard (skin.xm wrapped
+	// with the unresolved background.bmp came out as a giant smear of
+	// the menu-hilight pill). Better to fail loudly so missing assets
+	// are obvious during skin authoring.
+	ALERT("Unable to load texture file (%s)", szURL);
 	return NULL;
 }
 

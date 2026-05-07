@@ -77,6 +77,7 @@ void InitSkin()
 }
 
 extern void FlushTextureCache();
+extern void FlushMeshCache();
 extern void Material_Init(bool bReloadSkinXBX);
 
 void ReloadSkin()
@@ -102,6 +103,7 @@ void ReloadSkin()
 	}
 
 	FlushTextureCache();
+	FlushMeshCache();
 	Material_Init(true);
 
 	OutputDebugString("[ReloadSkin] Skin reloaded successfully\n");

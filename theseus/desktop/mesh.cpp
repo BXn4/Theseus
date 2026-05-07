@@ -12,6 +12,7 @@
 #include "xip.h"
 #include "file_util.h"
 #include "camera.h"
+#include "skin_assets.h"
 
 extern CCamera theCamera;
 extern unsigned int g_uMesh;
@@ -303,27 +304,76 @@ void CMeshNode::load(const TCHAR *szFile)
 	char szFilePath[MAX_PATH];
 	MakeAbsoluteURL(szFilePath, szFile);
 
-	m_mesh = (CMeshCore *)FindObjectInXIP(szFilePath, szFile);
+	m_mesh = NULL;
 
+	// Skin override first. Lets skin authors ship custom meshes
+	// (cellwall.xm, Inner_cell-FACES.xm, custom pod shapes) that
+	// replace the XIP defaults. Mirrors what LoadTexture does for
+	// textures; without this hook, anything in default.xip always
+	// wins regardless of what the active skin ships.
+	//
+	// CMesh::Load returns a bool we can trust -- the obvious "load
+	// then check GetFVF" pattern would assert on missing files
+	// because GetFVF() is hard-asserting m_fvf != 0 in debug.
+	if (g_sSkinDir && g_sSkinDir[0])
+	{
+		// Probe every member of the equivalence group, then fall
+		// through. NO allowlist gate on meshes -- UI.X-era skins
+		// drop entire main-menu mesh packs (71+ files) into the
+		// skin folder and expect them to win over the bundled XIP.
+		// One stat() per mesh reference is cheap; the canonical
+		// fast-path stays the XIP archive lookup below.
+		const char *candidates[4];
+		int nCandidates = SkinCandidatesFor(szFile, candidates, 4);
+		for (int i = 0; i < nCandidates && m_mesh == NULL; i++)
+		{
+			char SkinMeshPath[MAX_PATH];
+			sprintf(SkinMeshPath, "%s%s", g_sSkinDir, candidates[i]);
+			CMesh *pSkinMesh = new CMesh;
+			if (pSkinMesh->Load(SkinMeshPath))
+			{
+				m_ownMesh = true;
+				m_mesh = pSkinMesh;
+			}
+			else
+			{
+				delete pSkinMesh;
+			}
+		}
+	}
+
+	// XIP archive next -- the bundled default for any mesh the
+	// active skin doesn't override.
+	if (m_mesh == NULL)
+	{
+		m_mesh = (CMeshCore *)FindObjectInXIP(szFilePath, szFile);
+		if (m_mesh != NULL)
+			m_ownMesh = false;
+	}
+
+	// Disk fallback. Use CMesh::Load's bool return (same reason as
+	// the skin override block) instead of LoadMesh + GetFVF probe.
 	if (m_mesh == NULL)
 	{
 		m_ownMesh = true;
-		CMesh *pMesh = LoadMesh(szFilePath);
-		m_mesh = pMesh;
-		if (pMesh->GetFVF() == 0)
+		CMesh *pMesh = new CMesh;
+		if (pMesh->Load(szFilePath))
+		{
+			m_mesh = pMesh;
+		}
+		else
 		{
 			delete pMesh;
-			MakePath(szFilePath, g_szAppDir, szFile);
-			pMesh = LoadMesh(szFilePath);
-			m_mesh = pMesh;
-			if (pMesh->GetFVF() == 0)
-				return;
+			char altPath[MAX_PATH];
+			MakePath(altPath, g_szAppDir, szFile);
+			pMesh = new CMesh;
+			if (pMesh->Load(altPath))
+				m_mesh = pMesh;
+			else
+				delete pMesh;
 		}
 	}
-	else
-	{
-		m_ownMesh = false;
-	}
+
 }
 
 DWORD CMeshNode::GetFVF()
@@ -332,6 +382,35 @@ DWORD CMeshNode::GetFVF()
 		return 0;
 
 	return m_mesh->GetFVF();
+}
+
+// Drop every loaded mesh and mark every CMeshNode dirty so the next
+// Render() pass re-runs load() against the current g_sSkinDir. Called
+// from ReloadSkin alongside FlushTextureCache: skin switches change
+// what cellwall.xm resolves to, but without this, scenes already on
+// screen keep the meshes that were loaded under the previous skin.
+//
+// XIP-owned meshes (m_ownMesh==false) are not deleted -- the XIP owns
+// the buffer and would crash on free. We just unhook the pointer; the
+// reload will route back through the normal skin/XIP/disk fallback.
+void FlushMeshCache()
+{
+	for (CMeshNode *pNode = CMeshNode::c_pFirst; pNode != NULL; pNode = pNode->m_next)
+	{
+		if (pNode->m_mesh != NULL)
+		{
+			if (pNode->m_ownMesh)
+				delete pNode->m_mesh;
+			pNode->m_mesh = NULL;
+			pNode->m_ownMesh = true;
+		}
+		// Dirty every node, including ones whose previous load
+		// failed (m_mesh stayed NULL). Otherwise a skin missing
+		// cellwall.xm leaves those nodes permanently NULL even
+		// after the user switches back to a skin that ships it,
+		// because FlushMeshCache wouldn't re-dirty them.
+		pNode->m_dirty = true;
+	}
 }
 
 // ============================================================================
