@@ -645,19 +645,13 @@ LPDIRECT3DTEXTURE8 LoadTexture(const TCHAR *szURL, UINT width, UINT height)
 	TCHAR szBuf[MAX_PATH];
 	MakeAbsoluteURL(szBuf, szURL);
 
-	// === XIP lookup using forced .xbx extension ===
-	TCHAR *pch = _tcsrchr(szBuf, '.');
-	if (pch != NULL)
-	{
-		_tcscpy(pch + 1, _T("xbx"));
-		LPDIRECT3DTEXTURE8 lpTexture = (LPDIRECT3DTEXTURE8)FindObjectInXIP(szBuf, szURL, XIP_TYPE_TEXTURE);
-		if (lpTexture != NULL)
-			return lpTexture;
-	}
-
 	CActiveFile file;
 
-	// === Try override from skin directory using .xbx ===
+	// === Skin override first ===
+	// Skin authors expect their custom .xbx files to replace the XIP
+	// defaults; if XIP wins (the previous order) skin overrides only
+	// fire for assets the XIP doesn't ship, which silently breaks
+	// every skin that retextures cellwall, hilites, panels, etc.
 	if (TheseusGetSkinDir())
 	{
 		TCHAR SkinPath[MAX_PATH];
@@ -702,6 +696,16 @@ LPDIRECT3DTEXTURE8 LoadTexture(const TCHAR *szURL, UINT width, UINT height)
 				}
 			}
 		}
+	}
+
+	// === XIP lookup using forced .xbx extension ===
+	TCHAR *pch = _tcsrchr(szBuf, '.');
+	if (pch != NULL)
+	{
+		_tcscpy(pch + 1, _T("xbx"));
+		LPDIRECT3DTEXTURE8 lpTexture = (LPDIRECT3DTEXTURE8)FindObjectInXIP(szBuf, szURL, XIP_TYPE_TEXTURE);
+		if (lpTexture != NULL)
+			return lpTexture;
 	}
 
 	// === Fallback: Try original path with original extension ===
@@ -1565,8 +1569,46 @@ void CMeshNode::load(const TCHAR *szFile)
 	TCHAR szFilePath[MAX_PATH];
 	MakeAbsoluteURL(szFilePath, szFile);
 
-	m_mesh = (CMeshCore *)FindObjectInXIP(szFilePath, szFile);
+	m_mesh = NULL;
 
+	// Skin override first. Lets skin authors ship custom meshes
+	// (cellwall.xm, Inner_cell-FACES.xm, custom pod shapes, etc.)
+	// that replace the XIP defaults. Mirrors what LoadTexture does
+	// for textures; without this hook, anything in default.xip
+	// always wins regardless of what the active skin ships.
+	//
+	// Use CMesh::Load's bool return directly instead of going
+	// through the LoadMesh() wrapper + GetFVF probe -- GetFVF()
+	// ASSERTs on m_fvf == 0 in debug builds, so the obvious
+	// "load then check" pattern fires the assert when a skin
+	// doesn't ship the mesh in question.
+	if (TheseusGetSkinDir() && TheseusGetSkinDir()[0])
+	{
+		TCHAR SkinMeshPath[MAX_PATH];
+		_stprintf(SkinMeshPath, _T("%s%s"), TheseusGetSkinDir(), szFile);
+		CMesh *pSkinMesh = new CMesh;
+		if (pSkinMesh->Load(SkinMeshPath))
+		{
+			m_ownMesh = true;
+			m_mesh = pSkinMesh;
+			TRACE(_T("\002Loaded %s from skin override\n"), SkinMeshPath);
+		}
+		else
+		{
+			delete pSkinMesh;
+		}
+	}
+
+	// XIP archive next -- the bundled default for any mesh the
+	// active skin doesn't override.
+	if (m_mesh == NULL)
+	{
+		m_mesh = (CMeshCore *)FindObjectInXIP(szFilePath, szFile);
+		if (m_mesh != NULL)
+			m_ownMesh = false;
+	}
+
+	// Disk fallback -- relative to current scene dir, then app dir.
 	if (m_mesh == NULL)
 	{
 		m_ownMesh = true;
@@ -1582,10 +1624,6 @@ void CMeshNode::load(const TCHAR *szFile)
 				return;
 		}
 		TRACE(_T("\002Loaded %s from file\n"), szFilePath);
-	}
-	else
-	{
-		m_ownMesh = false;
 	}
 }
 
