@@ -1,0 +1,268 @@
+[Menu Styles]
+DUDTex=Project Mayhem I
+orbcellMat=ReflectSurface
+LXMat=ReflectSurface
+StructureMat=GameMenuEgg
+PodMat=ReflectSurface
+Orbcells=none
+orbcellTex=Project Mayhem I
+SXTex=Project Mayhem I
+StructureTex=Project Mayhem I
+PodTex=Project Mayhem I
+PanelTex=Project Mayhem I
+PodsupTex=Project Mayhem I
+LXTex=Project Mayhem I
+tubesTex=Project Mayhem I
+MatsNTex=True
+Orbcells2=none
+PanelMat=ReflectSurface
+PodsupMat=ReflectSurface
+tubesMat=ReflectSurface
+SXMat=ReflectSurface
+[Keyboard]
+ColorD=	0, 0, 0, 255
+ColorC=	252, 252, 242, 255
+ColorB=	0, 0, 0, 255
+ColorA= 255, 255, 255 255
+[PanelBacking]
+Color= 0, 54, 72, 200
+[GameHilite]
+Color= 252, 252, 242, 255
+[DarkenBackingDark]
+Color=0, 0, 0, 0
+[MetaBacking]
+Color= 0, 54, 72, 150
+[TextBacking]
+Color= 0, 0, 0, 0
+[DarkenBacking]
+Color= 0, 0, 0, 0
+[MemManMetaBacking]
+Color= 252, 252, 242, 160
+[SavedGameBacking]
+Color= 0, 0, 0, 0
+[ModeBacking]
+Color= 252, 252, 242, 105
+[NameBacking]
+Color= 252, 252, 242, 165
+[PanelBacking_04]
+Color= 0, 40, 53, 170
+[PanelBacking_03]
+Color= 0, 54, 72, 170
+[PanelBacking_02]
+Color= 0, 0, 0, 0
+[PanelBacking_01]
+Color= 0, 54, 72, 150
+[AudioCD]
+ColorB=	128, 128, 128, 180
+ColorA=	252, 252, 242, 40
+[Tvbox]
+ColorB=	0, 0, 0, 255
+ColorA=	128, 128, 128, 180
+[Metal_Chrome]
+ColorB=	0, 0, 0, 255
+ColorA=	128, 128, 128, 180
+[EggGlowPulse]
+ColorB=	252, 252, 242, 255
+ColorA=	0, 0, 0, 0
+[console_hilite]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 255
+[FlatSurfaces2sided3]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 160
+[GameEgg]
+ColorB=	61, 128, 128, 0
+ColorA=	252, 252, 242, 165
+[CellEgg/Parts]
+ColorB=	195, 195, 211, 0
+ColorA=	195, 195, 211, 160
+[Cell_Light/LegSkin]
+ColorB=	195, 195, 182, 0
+ColorA=	195, 195, 182, 170
+[Cell_Light]
+ColorB=	195, 195, 182, 0
+ColorA=	195, 195, 182, 190
+[FlatSrfc/PodParts]
+ColorB=	195, 195, 182, 0
+ColorA=	195, 195, 182, 220
+[CellWallStructure]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 165
+[gradient]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 150
+[ButtonGlow]
+ColorB=	64, 128, 128, 0
+ColorA=	252, 252, 242, 185
+[EggGlow]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 160
+[MemoryHeader]
+ColorB=	0, 194, 192, 0
+ColorA=	0, 128, 192, 165
+[Tube]
+ColorB=	0, 0, 0, 0
+ColorA=	195, 195, 182, 140
+[EmptyMU]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 165
+[TubesQ]
+ColorB=	0, 0, 0, 0
+ColorA=	195, 195, 182, 90
+[TubesFade]
+ColorB=	0, 0, 0, 0
+ColorA=	195, 195, 182, 160
+[JewelSurface02/PodMesh]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 165
+[Tubes]
+ColorB=	0, 0, 0, 0
+ColorA=	195, 195, 182, 165
+[Wireframe]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 130
+[MenuCell]
+ColorB=	252, 252, 252, 0
+ColorA=	0, 0, 0, 255
+[JwlSrfc01/InfoPnls]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 175
+[GamePod]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 175
+[GamePodb]
+ColorB=	252, 252, 242, 80
+ColorA=	0, 54, 72, 255
+[MU1Pod]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 140
+[MU1Pod_HL]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 150
+[IconParts1]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 165
+[IconParts]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 175
+[Material #133sdsfdsf]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 195
+[Shell]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 130
+[GameMenuEgg]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 165
+[SavedGameEgg]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 150
+[Mem_InnerWall_Outer]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 160
+[FlatUnselected]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 125
+[SavedEgg_Selected]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 150
+[HK_SavedGame_Row01]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 175
+[SC_SavedGame_Row01]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 175
+[MetaFlatSurfaces]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 150
+[NavType34]
+ColorB=	0, 0, 0, 0
+ColorA= 252, 252, 242, 180
+[Spout]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 130
+[Screen]
+ColorB=	0, 0, 0, 100
+ColorA=	252, 252, 242, 160
+[DetailLegSkin_Inner]
+ColorB=	0, 0, 0, 0
+ColorA=	252, 252, 242, 150
+[FlatSurfaces2sided]
+ColorB=	252, 252, 242, 0
+ColorA=	252, 252, 242, 160
+[DarkSurfaces2]
+ColorB=	0, 54, 72, 10
+ColorA=	0, 54, 72, 165
+[DarkSurfaces]
+ColorB=	0, 54, 72, 0
+ColorA=	0, 54, 72, 140
+[FlatSurfacesMemory]
+ColorB=	252, 252, 242, 50
+ColorA=	252, 252, 242, 180
+[FlatSurfacesSelected]
+ColorB=	195, 195, 182, 105
+ColorA=	195, 195, 182, 200
+[FlatSurfaces]
+ColorB=	252, 252, 242, 30
+ColorA=	252, 252, 242, 200
+[red]
+Color= 255, 0, 0, 255
+[GameHiliteMemory]
+Color= 252, 252, 242, 255
+[ItemsType]
+Color= 252, 252, 242, 180
+[Material #108]
+Color= 252, 252, 242, 255
+[CellEgg/Partsz]
+Color= 252, 252, 242, 255
+[CellEgg/Partsw]
+Color= 252, 252, 242, 0
+[Black80]
+Color= 0, 0, 0, 0
+[XBoxGreenq]
+Color= 252, 252, 242, 175
+[HilightedType]
+Color= 255, 255, 255, 180
+[Material #1336]
+Color= 252, 252, 242, 125
+[Material #133511]
+Color= 252, 252, 242, 105
+[Material #1335]
+Color= 252, 252, 242, 100
+[Material #133]
+Color= 252, 252, 242, 180
+[Typesdsafsda]
+Color= 252, 252, 242, 180
+[Type]
+Color= 252, 252, 242, 180
+[XBoxGreen]
+Color= 252, 252, 242, 175
+[RedType]
+Color= 200, 30, 30, 255
+[NavType]
+Color= 255, 255, 255, 180
+[Nothing]
+Color= 128, 128, 128, 255
+[GameHilite33]
+Color= 252, 252, 242, 150
+[XBoxGreen2]
+Color= 252, 252, 242, 255
+[XBOXgreen]
+Color= 121, 185, 255, 255
+[XBOXgreendark]
+Color= 252, 252, 242, 160
+[Material #1334]
+Color= 252, 252, 242, 105
+[InnerWall_02]
+ColorB=	252, 252, 242, 0
+ColorA=	252, 252, 242, 0
+[InnerWall_01]
+ColorB=	0, 0, 0, 30
+ColorA=	0, 0, 0, 50
+[SkinInfo]
+Credits=Chokeman, Odb718, gasclown
+MadeUsing=MCP, fastxbx2dds2img, photoshop, notepad
+Version=1.0
+DateCreated=4-9-2005
+SkinName=Project Mayhem
+Author=MerDeNoms
