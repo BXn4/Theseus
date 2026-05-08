@@ -863,6 +863,9 @@ int main(int argc, char* argv[]) {
     LoadDesktopSettings();
     // Materialize the ini on first run / after adding new keys.
     SaveDesktopSettings();
+    extern void Playlist_LoadAll();
+    Playlist_LoadAll();
+    MediaDB_LoadCache();
 
     // Request OpenGL 3.2 Core Profile (required for GLSL #version 150)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);

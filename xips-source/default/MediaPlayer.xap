@@ -22,7 +22,7 @@
 var nCurMediaItem;
 var nMediaItemCount;
 var bInCategoryView;
-var nCurCategory;          // 0 = Movies, 1 = TV Shows
+var nCurCategory;          // 0 = Movies, 1 = TV Shows, 2 = Playlists
 var rgCategoryName;
 var nMediaListScroll;      // scroll offset into the (huge) movie/show list
 var nMediaListVisible;     // visible row count (8)
@@ -31,6 +31,12 @@ var gSelectedPlot;
 var gSelectedMeta;
 var gSelectedKind;         // 0 = movie, 1 = tv show
 var gSelectedIndex;        // absolute index into MediaCollection movies or shows
+
+// Playlists drill: when nCurCategory==2 and bInCategoryView==0, the list
+// shows playlist NAMES. Picking one flips bInPlaylistItemView=1 and the
+// list switches to playlist items. Picking an item plays from that index.
+var bInPlaylistItemView;
+var nPlaylistCursorBackup; // restore the cursor when backing out of items
 
 
 function initialize()
@@ -44,6 +50,10 @@ function initialize()
 	rgCategoryName = new Array;
 	rgCategoryName[0] = "Movies";
 	rgCategoryName[1] = "TV Shows";
+	rgCategoryName[2] = "Playlists";
+
+	bInPlaylistItemView   = 0;
+	nPlaylistCursorBackup = 0;
 
 	gSelectedTitle = "";
 	gSelectedPlot  = "";
@@ -59,15 +69,23 @@ function BindActiveList()
 {
 	if (bInCategoryView)
 	{
-		nMediaItemCount = 2;
+		nMediaItemCount = 3;
 	}
 	else if (nCurCategory == 0)
 	{
 		nMediaItemCount = theMediaCollection.GetMovieCount();
 	}
-	else
+	else if (nCurCategory == 1)
 	{
 		nMediaItemCount = theMediaCollection.GetShowCount();
+	}
+	else if (bInPlaylistItemView)
+	{
+		nMediaItemCount = thePlaylistCollection.GetItemCount();
+	}
+	else
+	{
+		nMediaItemCount = thePlaylistCollection.GetCount();
 	}
 }
 
@@ -78,7 +96,11 @@ function GetActiveTitle(absIdx)
 		return rgCategoryName[absIdx];
 	if (nCurCategory == 0)
 		return theMediaCollection.GetMovieTitle(absIdx);
-	return theMediaCollection.GetShowTitle(absIdx);
+	if (nCurCategory == 1)
+		return theMediaCollection.GetShowTitle(absIdx);
+	if (bInPlaylistItemView)
+		return thePlaylistCollection.GetItemTitle(absIdx);
+	return thePlaylistCollection.GetName(absIdx);
 }
 
 
@@ -140,10 +162,20 @@ function UpdateMediaList()
 		c.MediaHeaderText.text = "MEDIA / MOVIES";
 		c.MusicCountText.text  = nMediaItemCount + " MOVIES";
 	}
-	else
+	else if (nCurCategory == 1)
 	{
 		c.MediaHeaderText.text = "MEDIA / TV SHOWS";
 		c.MusicCountText.text  = nMediaItemCount + " SHOWS";
+	}
+	else if (bInPlaylistItemView)
+	{
+		c.MediaHeaderText.text = "MEDIA / PLAYLISTS";
+		c.MusicCountText.text  = nMediaItemCount + " ITEMS";
+	}
+	else
+	{
+		c.MediaHeaderText.text = "MEDIA / PLAYLISTS";
+		c.MusicCountText.text  = nMediaItemCount + " PLAYLISTS";
 	}
 }
 
@@ -229,13 +261,26 @@ DEF theMediaMenu Level
 				BindActiveList();
 				UpdateMediaList();
 			}
+			else if ((nCurCategory == 2) & (bInPlaylistItemView == 0))
+			{
+				// Playlist names -> playlist items.
+				thePlaylistCollection.SetCurrent(nCurMediaItem);
+				nPlaylistCursorBackup = nCurMediaItem;
+				bInPlaylistItemView = 1;
+				nCurMediaItem    = 0;
+				nMediaListScroll = 0;
+				BindActiveList();
+				UpdateMediaList();
+			}
+			else if ((nCurCategory == 2) & (bInPlaylistItemView == 1))
+			{
+				// Picked an item in a playlist -> queue from this index and play.
+				thePlaylistCollection.PlayFromIndex(nCurMediaItem);
+			}
 			else
 			{
-				// Item list -> action menu (Scene 2). Push the selection
+				// Movie/TV item list -> action menu (Scene 2). Push the selection
 				// across via globals so StartMediaActionLevel can read it.
-				// Stash selection on the C++ side so the action menu's
-				// OnArrival can pull title/meta/plot fresh — XAP top-level
-				// vars don't always survive the GoTo.
 				if (nCurCategory == 0)
 					theMediaCollection.SetSelectedMovie(nCurMediaItem);
 				else
@@ -247,7 +292,16 @@ DEF theMediaMenu Level
 		function OnBDown()
 		{
 			PlaySoundB();
-			if (bInCategoryView == 0)
+			if (bInPlaylistItemView)
+			{
+				// Playlist items -> playlist names.
+				bInPlaylistItemView = 0;
+				nCurMediaItem    = nPlaylistCursorBackup;
+				nMediaListScroll = 0;
+				BindActiveList();
+				UpdateMediaList();
+			}
+			else if (bInCategoryView == 0)
 			{
 				// Item list -> back to category view.
 				bInCategoryView  = 1;
@@ -773,5 +827,12 @@ DEF theMediaActionMenu Level
 
 
 DEF theMediaCollection MediaCollection
+{
+}
+
+
+// User-authored playlist collection (CPlaylistCollection in
+// theseus/desktop/desktop_nodes.cpp). Storage: Configs/playlists.ini.
+DEF thePlaylistCollection PlaylistCollection
 {
 }
