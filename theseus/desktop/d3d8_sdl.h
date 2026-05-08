@@ -1753,6 +1753,27 @@ public:
         return -1;
     }
 
+    // Forces GL into a known defaults state and aligns the cache with it.
+    // Call after foreign code (libmpv, ImGui's GL3 backend, etc.) renders
+    // through our context; otherwise the cache thinks blend/depth/cull
+    // are still set the way Theseus left them and skips the gl* re-apply.
+    void InvalidateStateCache() {
+        glDisable(GL_BLEND);                        m_alphaBlendEnable = false;
+        glDisable(GL_DEPTH_TEST);                   m_zEnable = false;
+        glDepthMask(GL_TRUE);                       m_zWriteEnable = true;
+        glDisable(GL_CULL_FACE);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        m_srcBlend  = 0xFFFFFFFF;
+        m_destBlend = 0xFFFFFFFF;
+        m_zFunc     = 0xFFFFFFFF;
+        m_cullMode  = 0xFFFFFFFF;
+        m_fillMode  = 0xFFFFFFFF;
+        m_tss0ColorOp = 0xFFFFFFFF; m_tss0ColorArg1 = 0xFFFFFFFF; m_tss0ColorArg2 = 0xFFFFFFFF;
+        m_tss0AlphaOp = 0xFFFFFFFF; m_tss0AlphaArg1 = 0xFFFFFFFF; m_tss0AlphaArg2 = 0xFFFFFFFF;
+        m_tss1ColorOp = 0xFFFFFFFF; m_tss1ColorArg1 = 0xFFFFFFFF; m_tss1ColorArg2 = 0xFFFFFFFF;
+        m_tss1AlphaOp = 0xFFFFFFFF; m_tss1AlphaArg1 = 0xFFFFFFFF; m_tss1AlphaArg2 = 0xFFFFFFFF;
+    }
+
     HRESULT SetRenderState(DWORD state, DWORD value) {
         if (state == D3DRS_TEXTUREFACTOR) m_texFactor = (D3DCOLOR)value;
         else if (state == D3DRS_ALPHABLENDENABLE) {
