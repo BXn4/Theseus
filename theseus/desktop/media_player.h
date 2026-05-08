@@ -43,6 +43,21 @@ int  MediaPlayer_GetChapterCount();
 void MediaPlayer_NextAudioTrack();
 void MediaPlayer_NextSubtitleTrack();
 
+// Track enumeration + direct selection. id = mpv track id (1-based);
+// pass 0 to disable (subtitles off, audio off).
+struct MediaTrack {
+    int  id;
+    int  type;          // 0=audio, 1=subtitle
+    char title[128];
+    char lang[32];
+    bool selected;
+    bool external;
+};
+#define MEDIA_TRACK_MAX 32
+int  MediaPlayer_GetTracks(MediaTrack* out, int maxCount);
+void MediaPlayer_SetAudioTrack(int id);
+void MediaPlayer_SetSubtitleTrack(int id);
+
 // Playback speed
 void MediaPlayer_SetSpeed(double speed);
 double MediaPlayer_GetSpeed();

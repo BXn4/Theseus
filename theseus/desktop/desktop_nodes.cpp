@@ -20,6 +20,7 @@
 #include "cdaudio.h"
 #include "media_player.h"
 #include "tmdb.h"
+#include "playlist.h"
 extern void DiscDrive_SetDiscType(const char* type);
 
 // Helper: resolve XAP audio URL to local filesystem path
@@ -4419,6 +4420,77 @@ extern "C" int MediaDB_GetShowCount()
 }
 extern "C" int MediaDB_IsScanning() { return g_scanRunning.load() ? 1 : 0; }
 
+// Boot-time hook so non-XAP consumers (Playlist Maker, etc.) see the
+// cached library before the XAP MediaCollection node is constructed.
+extern "C" void MediaDB_LoadCache() { LoadCache(); }
+
+// Read accessors for non-XAP consumers (playlist_maker, etc.).
+// Caller must wrap iteration in Lock/Unlock if a scan may be running.
+extern "C" void MediaDB_Lock()   { g_dbMutex.lock();   }
+extern "C" void MediaDB_Unlock() { g_dbMutex.unlock(); }
+
+extern "C" const char* MediaDB_GetMovieTitleC(int i) {
+    if (i < 0 || i >= (int)g_movies.size()) return "";
+    return g_movies[i].title.c_str();
+}
+extern "C" const char* MediaDB_GetMoviePathC(int i) {
+    if (i < 0 || i >= (int)g_movies.size()) return "";
+    return g_movies[i].path.c_str();
+}
+extern "C" int MediaDB_GetMovieYearC(int i) {
+    if (i < 0 || i >= (int)g_movies.size()) return 0;
+    return g_movies[i].year;
+}
+
+extern "C" const char* MediaDB_GetShowTitleC(int i) {
+    if (i < 0 || i >= (int)g_shows.size()) return "";
+    return g_shows[i].title.c_str();
+}
+
+extern "C" int MediaDB_GetSeasonCountC(int showIdx) {
+    if (showIdx < 0 || showIdx >= (int)g_shows.size()) return 0;
+    return (int)g_shows[showIdx].seasons.size();
+}
+extern "C" const char* MediaDB_GetSeasonNameC(int showIdx, int seasonIdx) {
+    if (showIdx < 0 || showIdx >= (int)g_shows.size()) return "";
+    if (seasonIdx < 0 || seasonIdx >= (int)g_shows[showIdx].seasons.size()) return "";
+    return g_shows[showIdx].seasons[seasonIdx].name.c_str();
+}
+
+extern "C" int MediaDB_GetEpisodeCountC(int showIdx, int seasonIdx) {
+    if (showIdx < 0 || showIdx >= (int)g_shows.size()) return 0;
+    if (seasonIdx < 0 || seasonIdx >= (int)g_shows[showIdx].seasons.size()) return 0;
+    return (int)g_shows[showIdx].seasons[seasonIdx].episodes.size();
+}
+extern "C" const char* MediaDB_GetEpisodeTitleC(int showIdx, int seasonIdx, int epIdx) {
+    if (showIdx < 0 || showIdx >= (int)g_shows.size()) return "";
+    if (seasonIdx < 0 || seasonIdx >= (int)g_shows[showIdx].seasons.size()) return "";
+    const auto& eps = g_shows[showIdx].seasons[seasonIdx].episodes;
+    if (epIdx < 0 || epIdx >= (int)eps.size()) return "";
+    return eps[epIdx].title.c_str();
+}
+extern "C" const char* MediaDB_GetEpisodePathC(int showIdx, int seasonIdx, int epIdx) {
+    if (showIdx < 0 || showIdx >= (int)g_shows.size()) return "";
+    if (seasonIdx < 0 || seasonIdx >= (int)g_shows[showIdx].seasons.size()) return "";
+    const auto& eps = g_shows[showIdx].seasons[seasonIdx].episodes;
+    if (epIdx < 0 || epIdx >= (int)eps.size()) return "";
+    return eps[epIdx].path.c_str();
+}
+extern "C" int MediaDB_GetEpisodeSeasonNumC(int showIdx, int seasonIdx, int epIdx) {
+    if (showIdx < 0 || showIdx >= (int)g_shows.size()) return 0;
+    if (seasonIdx < 0 || seasonIdx >= (int)g_shows[showIdx].seasons.size()) return 0;
+    const auto& eps = g_shows[showIdx].seasons[seasonIdx].episodes;
+    if (epIdx < 0 || epIdx >= (int)eps.size()) return 0;
+    return eps[epIdx].season;
+}
+extern "C" int MediaDB_GetEpisodeNumberC(int showIdx, int seasonIdx, int epIdx) {
+    if (showIdx < 0 || showIdx >= (int)g_shows.size()) return 0;
+    if (seasonIdx < 0 || seasonIdx >= (int)g_shows[showIdx].seasons.size()) return 0;
+    const auto& eps = g_shows[showIdx].seasons[seasonIdx].episodes;
+    if (epIdx < 0 || epIdx >= (int)eps.size()) return 0;
+    return eps[epIdx].episode;
+}
+
 IMPLEMENT_NODE("MediaCollection", CMediaCollection, CNode)
 
 START_NODE_PROPS(CMediaCollection, CNode)
@@ -4457,4 +4529,83 @@ START_NODE_FUN(CMediaCollection, CNode)
 	NODE_FUN_SV(GetSelectedPlot)
 	NODE_FUN_VV(PlaySelected)
 	NODE_FUN_IV(ConsumePlaybackExited)
+END_NODE_FUN()
+
+
+// ============================================================================
+// CPlaylistCollection — XAP-callable view over the user's named playlists.
+// Mirrors the GetCount / GetTitle / SetCurrent / Play... shape of
+// CMediaCollection so the playlist scene can be a near-clone of the TV flow.
+// ============================================================================
+
+class CPlaylistCollection : public CNode
+{
+public:
+	CPlaylistCollection() : m_cur(-1) {}
+
+	DECLARE_NODE(CPlaylistCollection, CNode)
+	DECLARE_NODE_PROPS()
+	DECLARE_NODE_FUNCTIONS()
+
+	int m_cur;
+
+	int GetCount() { return Playlist_Count(); }
+
+	CStrObject* GetName(int i)
+	{
+		const Playlist* p = Playlist_Get(i);
+		return new CStrObject(_T(p ? p->name.c_str() : ""));
+	}
+
+	CStrObject* GetMeta(int i)
+	{
+		const Playlist* p = Playlist_Get(i);
+		if (!p) return new CStrObject;
+		char buf[64];
+		int n = (int)p->items.size();
+		sprintf(buf, "Playlist  %d %s", n, n == 1 ? "item" : "items");
+		return new CStrObject(_T(buf));
+	}
+
+	void SetCurrent(int i) { m_cur = i; }
+
+	int GetItemCount()
+	{
+		const Playlist* p = Playlist_Get(m_cur);
+		return p ? (int)p->items.size() : 0;
+	}
+
+	CStrObject* GetItemTitle(int i)
+	{
+		const Playlist* p = Playlist_Get(m_cur);
+		if (!p || i < 0 || i >= (int)p->items.size()) return new CStrObject;
+		const PlaylistItem& it = p->items[i];
+		const char* s = it.title.empty() ? it.path.c_str() : it.title.c_str();
+		return new CStrObject(_T(s));
+	}
+
+	void PlayFromIndex(int startIdx)
+	{
+		const Playlist* p = Playlist_Get(m_cur);
+		if (!p) return;
+		extern void MediaUI_PlayPlaylist(const char* playlistName, int startIdx);
+		MediaUI_PlayPlaylist(p->name.c_str(), startIdx);
+	}
+};
+
+IMPLEMENT_NODE("PlaylistCollection", CPlaylistCollection, CNode)
+
+START_NODE_PROPS(CPlaylistCollection, CNode)
+END_NODE_PROPS()
+
+#undef _FND_CLASS
+#define _FND_CLASS CPlaylistCollection
+START_NODE_FUN(CPlaylistCollection, CNode)
+	NODE_FUN_IV(GetCount)
+	NODE_FUN_SI(GetName)
+	NODE_FUN_SI(GetMeta)
+	NODE_FUN_VI(SetCurrent)
+	NODE_FUN_IV(GetItemCount)
+	NODE_FUN_SI(GetItemTitle)
+	NODE_FUN_VI(PlayFromIndex)
 END_NODE_FUN()

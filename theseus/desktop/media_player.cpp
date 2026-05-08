@@ -303,6 +303,55 @@ void MediaPlayer_NextSubtitleTrack() {
     mpv_command(s_mpv, cmd);
 }
 
+int MediaPlayer_GetTracks(MediaTrack* out, int maxCount) {
+    if (!s_mpv || !out || maxCount <= 0) return 0;
+    mpv_node node;
+    if (mpv_get_property(s_mpv, "track-list", MPV_FORMAT_NODE, &node) < 0) return 0;
+    int count = 0;
+    if (node.format == MPV_FORMAT_NODE_ARRAY) {
+        mpv_node_list* list = node.u.list;
+        for (int i = 0; i < list->num && count < maxCount; i++) {
+            mpv_node* item = &list->values[i];
+            if (item->format != MPV_FORMAT_NODE_MAP) continue;
+            mpv_node_list* m = item->u.list;
+            MediaTrack t = {};
+            t.type = -1;
+            for (int j = 0; j < m->num; j++) {
+                const char* k = m->keys[j];
+                mpv_node* v = &m->values[j];
+                if (!strcmp(k, "id") && v->format == MPV_FORMAT_INT64)
+                    t.id = (int)v->u.int64;
+                else if (!strcmp(k, "type") && v->format == MPV_FORMAT_STRING) {
+                    if (!strcmp(v->u.string, "audio")) t.type = 0;
+                    else if (!strcmp(v->u.string, "sub")) t.type = 1;
+                }
+                else if (!strcmp(k, "title") && v->format == MPV_FORMAT_STRING)
+                    strncpy(t.title, v->u.string, sizeof(t.title) - 1);
+                else if (!strcmp(k, "lang") && v->format == MPV_FORMAT_STRING)
+                    strncpy(t.lang, v->u.string, sizeof(t.lang) - 1);
+                else if (!strcmp(k, "selected") && v->format == MPV_FORMAT_FLAG)
+                    t.selected = v->u.flag != 0;
+                else if (!strcmp(k, "external") && v->format == MPV_FORMAT_FLAG)
+                    t.external = v->u.flag != 0;
+            }
+            if (t.type >= 0) out[count++] = t;
+        }
+    }
+    mpv_free_node_contents(&node);
+    return count;
+}
+
+static void SetTrackProp(const char* prop, int id) {
+    if (!s_mpv) return;
+    char buf[16];
+    if (id <= 0) snprintf(buf, sizeof(buf), "no");
+    else         snprintf(buf, sizeof(buf), "%d", id);
+    mpv_set_property_string(s_mpv, prop, buf);
+}
+
+void MediaPlayer_SetAudioTrack(int id)    { SetTrackProp("aid", id); }
+void MediaPlayer_SetSubtitleTrack(int id) { SetTrackProp("sid", id); }
+
 void MediaPlayer_SetSpeed(double speed) {
     if (!s_mpv) return;
     mpv_set_property(s_mpv, "speed", MPV_FORMAT_DOUBLE, &speed);

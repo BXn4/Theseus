@@ -9,6 +9,10 @@
 #include "media_player.h"
 #include "audio_sdl.h"
 #include "imgui.h"
+#include "playlist.h"
+
+#include <string>
+#include <vector>
 
 #ifdef __APPLE__
 #define GL_SILENCE_DEPRECATION
@@ -45,6 +49,7 @@ static const double OSD_FADE_SECONDS    = 0.5;   // fade-out over this much
 
 static double s_lastActivity = -1000.0; // far in past, hidden by default once entered
 static bool   s_cursorVisible = true;
+static bool   s_trackMenuOpen = false;
 
 static double NowSeconds() { return (double)SDL_GetTicks() / 1000.0; }
 
@@ -52,6 +57,64 @@ void MediaUI_NoteActivity()
 {
     s_lastActivity = NowSeconds();
 }
+
+void MediaUI_ToggleTrackMenu()
+{
+    s_trackMenuOpen = !s_trackMenuOpen;
+    s_lastActivity = NowSeconds(); // keep OSD up while menu is around
+}
+
+// ============================================================================
+// Playback queue. Snapshot of a playlist captured at PlayPlaylist time so
+// edits to the source playlist while playing don't change what's queued.
+// ============================================================================
+
+struct QueueItem { std::string path, title; };
+static std::vector<QueueItem> s_queue;
+static std::string            s_queuePlaylistName;
+static int                    s_queueIdx = -1;
+
+static void OpenCurrentQueueItem() {
+    if (s_queueIdx < 0 || s_queueIdx >= (int)s_queue.size()) return;
+    const QueueItem& it = s_queue[s_queueIdx];
+    if (!MediaPlayer_Open(it.path.c_str())) return;
+
+    g_mediaFullscreen = true;
+    extern void ApplyEffectiveMute_Public();
+    ApplyEffectiveMute_Public();
+    strncpy(g_mediaFullscreenTitle, it.title.c_str(), sizeof(g_mediaFullscreenTitle) - 1);
+    g_mediaFullscreenTitle[sizeof(g_mediaFullscreenTitle) - 1] = 0;
+    char sub[64];
+    snprintf(sub, sizeof(sub), "%s  (%d / %d)",
+        s_queuePlaylistName.c_str(), s_queueIdx + 1, (int)s_queue.size());
+    strncpy(g_mediaFullscreenSubtitle, sub, sizeof(g_mediaFullscreenSubtitle) - 1);
+    g_mediaFullscreenSubtitle[sizeof(g_mediaFullscreenSubtitle) - 1] = 0;
+}
+
+void MediaUI_PlayPlaylist(const char* playlistName, int startIdx) {
+    const Playlist* p = Playlist_Find(playlistName);
+    if (!p || p->items.empty()) return;
+    s_queue.clear();
+    for (size_t i = 0; i < p->items.size(); i++)
+        s_queue.push_back({p->items[i].path, p->items[i].title});
+    s_queuePlaylistName = playlistName;
+    s_queueIdx = (startIdx < 0 || startIdx >= (int)s_queue.size()) ? 0 : startIdx;
+    OpenCurrentQueueItem();
+}
+
+void MediaUI_PlaylistNext() {
+    if (s_queueIdx + 1 >= (int)s_queue.size()) return;
+    s_queueIdx++;
+    OpenCurrentQueueItem();
+}
+
+void MediaUI_PlaylistPrev() {
+    if (s_queueIdx <= 0) return;
+    s_queueIdx--;
+    OpenCurrentQueueItem();
+}
+
+bool MediaUI_PlaylistActive() { return s_queueIdx >= 0 && !s_queue.empty(); }
 
 // 0.0 = hidden, 1.0 = fully visible. Smoothly fades.
 static float OsdAlpha()
@@ -200,9 +263,15 @@ void MediaUI_RenderOSD()
     int ww = (int)disp.x;
     int wh = (int)disp.y;
 
-    // Auto-end: when libmpv reports stopped/idle (track finished), bail.
+    // Auto-end: when libmpv reports stopped/idle (track finished), advance the
+    // playlist queue if active, otherwise bail back to dashboard.
     MediaPlayerState st = MediaPlayer_GetState();
     if (st == MP_IDLE || st == MP_STOPPED) {
+        if (MediaUI_PlaylistActive() && s_queueIdx + 1 < (int)s_queue.size()) {
+            s_queueIdx++;
+            OpenCurrentQueueItem();
+            return;
+        }
         extern void MediaUI_StopFullscreen();
         MediaUI_StopFullscreen();
         return;
@@ -297,7 +366,9 @@ void MediaUI_RenderOSD()
         dl->AddText(font, timeSize, ImVec2(28, y0 + 28), textCol, timeStr);
 
         // Hint on right
-        const char* hint = "ESC  Stop     SPACE  Pause     <-/->  Seek 5s";
+        const char* hint = MediaUI_PlaylistActive()
+            ? "ESC Stop  SPACE Pause  <-/-> Seek  T Tracks  [/] Prev/Next"
+            : "ESC Stop  SPACE Pause  <-/-> Seek  T Tracks";
         ImVec2 hintSz = ImGui::CalcTextSize(hint);
         // CalcTextSize uses default font size; estimate hint width by length.
         float estHintW = (float)strlen(hint) * 6.5f;
@@ -319,6 +390,58 @@ void MediaUI_RenderOSD()
         float ky = barY + barH * 0.5f;
         dl->AddCircleFilled(ImVec2(kx, ky), 6.0f, knobCol, 16);
     }
+
+    // Track picker (T key). Audio + subtitles, click to select.
+    if (s_trackMenuOpen) {
+        s_lastActivity = NowSeconds();
+        MediaTrack tracks[MEDIA_TRACK_MAX];
+        int n = MediaPlayer_GetTracks(tracks, MEDIA_TRACK_MAX);
+
+        ImGui::SetNextWindowPos(ImVec2((float)ww - 380.0f, 110.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(360.0f, 0.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.85f);
+        ImGuiWindowFlags fl = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                              ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize;
+        if (ImGui::Begin("Tracks", &s_trackMenuOpen, fl)) {
+            ImGui::TextDisabled("Audio");
+            ImGui::Separator();
+            bool anyAudio = false;
+            for (int i = 0; i < n; i++) {
+                if (tracks[i].type != 0) continue;
+                anyAudio = true;
+                char label[256];
+                snprintf(label, sizeof(label), "%s%-4s %s##a%d",
+                    tracks[i].selected ? "* " : "  ",
+                    tracks[i].lang[0] ? tracks[i].lang : "---",
+                    tracks[i].title[0] ? tracks[i].title : "(untitled)",
+                    tracks[i].id);
+                if (ImGui::Selectable(label, tracks[i].selected))
+                    MediaPlayer_SetAudioTrack(tracks[i].id);
+            }
+            if (!anyAudio) ImGui::TextDisabled("  (none)");
+
+            ImGui::Spacing();
+            ImGui::TextDisabled("Subtitles");
+            ImGui::Separator();
+            bool subOff = true;
+            for (int i = 0; i < n; i++) if (tracks[i].type == 1 && tracks[i].selected) subOff = false;
+            if (ImGui::Selectable(subOff ? "* Off" : "  Off"))
+                MediaPlayer_SetSubtitleTrack(0);
+            for (int i = 0; i < n; i++) {
+                if (tracks[i].type != 1) continue;
+                char label[256];
+                snprintf(label, sizeof(label), "%s%-4s %s%s##s%d",
+                    tracks[i].selected ? "* " : "  ",
+                    tracks[i].lang[0] ? tracks[i].lang : "---",
+                    tracks[i].title[0] ? tracks[i].title : "(untitled)",
+                    tracks[i].external ? " (external)" : "",
+                    tracks[i].id);
+                if (ImGui::Selectable(label, tracks[i].selected))
+                    MediaPlayer_SetSubtitleTrack(tracks[i].id);
+            }
+        }
+        ImGui::End();
+    }
 }
 
 
@@ -331,6 +454,14 @@ void MediaUI_StopFullscreen()
     if (!g_mediaFullscreen) return;
     MediaPlayer_Stop();
     g_mediaFullscreen = false;
+    s_queue.clear();
+    s_queuePlaylistName.clear();
+    s_queueIdx = -1;
+    // libmpv's render context just trashed our GL state without going
+    // through the shim. Invalidate the cache so the dashboard's first frame
+    // back actually re-applies blend/depth/cull instead of trusting stale
+    // cache values (otherwise the cellwall renders solid green).
+    if (g_pD3DDev) g_pD3DDev->InvalidateStateCache();
     extern void ApplyEffectiveMute_Public();
     ApplyEffectiveMute_Public();
     g_mediaFullscreenTitle[0] = 0;

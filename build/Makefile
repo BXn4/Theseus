@@ -644,6 +644,8 @@ DESKTOP_SRCS_PLATFORM = \
 	$(THESEUS_SRC)/desktop/hdd_browser.cpp \
 	$(THESEUS_SRC)/desktop/xbox_hdd.cpp \
 	$(THESEUS_SRC)/desktop/title_maker.cpp \
+	$(THESEUS_SRC)/desktop/playlist.cpp \
+	$(THESEUS_SRC)/desktop/playlist_maker.cpp \
 	$(THESEUS_SRC)/desktop/preloader.cpp \
 	$(THESEUS_SRC)/desktop/media_player.cpp \
 	$(THESEUS_SRC)/desktop/boot_anim.cpp \

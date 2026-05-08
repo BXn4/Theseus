@@ -14,6 +14,7 @@
 #include "title_maker.h"
 #include "menu_bar.h"
 #include "media_player.h"
+#include "media_db.h"
 #include "xap_editor.h"
 #include "inspector.h"
 #include "preloader.h"
@@ -556,6 +557,10 @@ static void PreSwapOverlays() {
     // Title Maker floating window
     RenderTitleMaker();
 
+    // Playlist Maker floating window (F6)
+    extern void RenderPlaylistMaker();
+    RenderPlaylistMaker();
+
     // Selection highlight overlay (pulsing AABB + hover tooltip)
     if (needHighlight)
         DrawSelectionHighlight(g_pD3DDev);
@@ -858,6 +863,9 @@ int main(int argc, char* argv[]) {
     LoadDesktopSettings();
     // Materialize the ini on first run / after adding new keys.
     SaveDesktopSettings();
+    extern void Playlist_LoadAll();
+    Playlist_LoadAll();
+    MediaDB_LoadCache();
 
     // Request OpenGL 3.2 Core Profile (required for GLSL #version 150)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -1278,6 +1286,21 @@ int main(int argc, char* argv[]) {
                         if (k == SDLK_SPACE) { MediaPlayer_TogglePause(); break; }
                         if (k == SDLK_LEFT)  { MediaPlayer_SeekRelative(-5.0); break; }
                         if (k == SDLK_RIGHT) { MediaPlayer_SeekRelative( 5.0); break; }
+                        if (k == SDLK_t) {
+                            extern void MediaUI_ToggleTrackMenu();
+                            MediaUI_ToggleTrackMenu();
+                            break;
+                        }
+                        if (k == SDLK_LEFTBRACKET) {
+                            extern void MediaUI_PlaylistPrev();
+                            MediaUI_PlaylistPrev();
+                            break;
+                        }
+                        if (k == SDLK_RIGHTBRACKET) {
+                            extern void MediaUI_PlaylistNext();
+                            MediaUI_PlaylistNext();
+                            break;
+                        }
                     }
                     if (event.key.keysym.sym == SDLK_ESCAPE && g_debugMode && g_pD3DDev) {
                         g_pD3DDev->m_inspectorSelectedNode = NULL;
@@ -1297,6 +1320,10 @@ int main(int argc, char* argv[]) {
                     }
                     if (event.key.keysym.sym == SDLK_F5) {
                         g_hddBrowserOpen = !g_hddBrowserOpen;
+                    }
+                    if (event.key.keysym.sym == SDLK_F6) {
+                        extern void TogglePlaylistMaker();
+                        TogglePlaylistMaker();
                     }
                     if (event.key.keysym.sym == SDLK_F10) {
                         g_showMenuBar = !g_showMenuBar;

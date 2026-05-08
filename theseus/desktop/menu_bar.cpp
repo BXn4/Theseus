@@ -153,6 +153,10 @@ void RenderMainMenuBar() {
         if (ImGui::MenuItem("HDD Browser", "F5", g_hddBrowserOpen)) {
             g_hddBrowserOpen = !g_hddBrowserOpen;
         }
+        extern bool g_playlistMakerOpen;
+        if (ImGui::MenuItem("Playlist Maker", "F6", g_playlistMakerOpen)) {
+            g_playlistMakerOpen = !g_playlistMakerOpen;
+        }
 
         // Dev tools only in Development Mode
         if (g_startupMode == 2 || g_extractedMode) {
@@ -592,6 +596,7 @@ void RenderShortcutsWindow() {
         ImGui::Text("F3       Title Maker");
         ImGui::Text("F4       Settings");
         ImGui::Text("F5       HDD Browser");
+        ImGui::Text("F6       Playlist Maker");
         ImGui::Text("F10      Hide Menu Bar");
         ImGui::Text("F11      Toggle Fullscreen");
         ImGui::Text("F12      Toggle Borderless Window");
