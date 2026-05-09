@@ -21,6 +21,10 @@ static size_t WriteToString(void* ptr, size_t size, size_t nmemb, void* user) {
     return size * nmemb;
 }
 
+static size_t WriteToFile(void* ptr, size_t size, size_t nmemb, void* user) {
+    return fwrite(ptr, size, nmemb, (FILE*)user);
+}
+
 std::string Http_GetToString(const std::string& url) {
     EnsureGlobalInit();
     std::string out;
@@ -41,6 +45,7 @@ bool Http_GetToFile(const std::string& url, const std::string& outPath) {
     CURL* h = curl_easy_init();
     if (!h) { fclose(fp); remove(outPath.c_str()); return false; }
     ApplyCommonOpts(h, url.c_str());
+    curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, WriteToFile);
     curl_easy_setopt(h, CURLOPT_WRITEDATA, fp);
     CURLcode rc = curl_easy_perform(h);
     curl_easy_cleanup(h);
