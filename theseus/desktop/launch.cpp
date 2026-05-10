@@ -14,6 +14,7 @@
 #else
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <errno.h>
 #include <ctype.h>
@@ -80,6 +81,68 @@ static void ExecLaunch(const char* spec)
 // having to dig in stderr.
 char g_launchLastResult[256] = "";
 
+// Collapse a single outer quote pair so our own quoting doesn't stack.
+static void TrimOuterQuotes(char* s)
+{
+	if (!s) return;
+	size_t len = strlen(s);
+	if (len >= 2 && s[0] == '"' && s[len - 1] == '"') {
+		memmove(s, s + 1, len - 2);
+		s[len - 2] = '\0';
+	}
+}
+
+static bool IsExistingFile(const char* path)
+{
+#ifdef _WIN32
+	DWORD attr = GetFileAttributesA(path);
+	return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+#else
+	struct stat st;
+	return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+#endif
+}
+
+// Parent dir of the program being spawned. Tries quoted path, then whole
+// string as a file, then first whitespace-delimited token.
+static bool DeriveWorkDir(const char* cmd, char* out, size_t outSize)
+{
+	if (outSize) out[0] = '\0';
+	if (!cmd || !*cmd || outSize == 0) return false;
+
+	char target[1024];
+	target[0] = '\0';
+
+	if (cmd[0] == '"') {
+		const char* p = cmd + 1;
+		size_t n = 0;
+		while (*p && *p != '"' && n + 1 < sizeof(target)) target[n++] = *p++;
+		target[n] = '\0';
+	} else if (IsExistingFile(cmd)) {
+		strncpy(target, cmd, sizeof(target) - 1);
+		target[sizeof(target) - 1] = '\0';
+	} else {
+		const char* p = cmd;
+		size_t n = 0;
+		while (*p && !isspace((unsigned char)*p) && n + 1 < sizeof(target))
+			target[n++] = *p++;
+		target[n] = '\0';
+	}
+
+	if (!target[0]) return false;
+
+	const char* lastFwd = strrchr(target, '/');
+	const char* lastBack = strrchr(target, '\\');
+	const char* sep = lastFwd > lastBack ? lastFwd : lastBack;
+	if (!sep || sep == target) return false;
+
+	size_t dirLen = (size_t)(sep - target);
+	if (dirLen >= outSize) dirLen = outSize - 1;
+	memcpy(out, target, dirLen);
+	out[dirLen] = '\0';
+	return dirLen > 0;
+}
+
 // Single shared spawn implementation. Both DesktopLaunch (fire-and-forget,
 // e.g. Title Maker Test Launch) and SpawnLaunchSpec (overlay-driven game
 // launch) call this. Returns true if the OS handed us back a process /
@@ -88,18 +151,25 @@ static bool Launch_DoSpawn(const char* expanded)
 {
 	if (!expanded || !*expanded) return false;
 
+	char spec[2048];
+	strncpy(spec, expanded, sizeof(spec) - 1);
+	spec[sizeof(spec) - 1] = '\0';
+	TrimOuterQuotes(spec);
+
+	char workdir[1024];
+	bool haveWorkdir = DeriveWorkDir(spec, workdir, sizeof(workdir));
+
 #ifdef _WIN32
-	// URLs go through ShellExecute (handles steam:// via the registered
-	// handler, http(s) via default browser, etc.). Raw commands run
-	// through cmd /S /C -- /S tells cmd to treat the outermost quotes
-	// as literal command boundaries instead of trying to be clever,
-	// which is what breaks UNC paths and quoted args.
-	if (IsUrl(expanded))
+	// URLs go through ShellExecute. Raw commands run through cmd /C; no
+	// /S, so cmd preserves outer quotes for the 2-quote/exists case and
+	// strips first/last otherwise.
+	if (IsUrl(spec))
 	{
-		HINSTANCE rc = ShellExecuteA(NULL, "open", expanded, NULL, NULL, SW_SHOWNORMAL);
+		HINSTANCE rc = ShellExecuteA(NULL, "open", spec, NULL,
+		                             haveWorkdir ? workdir : NULL, SW_SHOWNORMAL);
 		if ((INT_PTR)rc <= 32) {
 			snprintf(g_launchLastResult, sizeof(g_launchLastResult),
-			         "ShellExecute failed (code %ld): %s", (long)(INT_PTR)rc, expanded);
+			         "ShellExecute failed (code %ld): %s", (long)(INT_PTR)rc, spec);
 			fprintf(stderr, "[launch] %s\n", g_launchLastResult);
 			return false;
 		}
@@ -110,13 +180,15 @@ static bool Launch_DoSpawn(const char* expanded)
 		si.cb = sizeof(si);
 		PROCESS_INFORMATION pi = {};
 		char cmd[2048];
-		snprintf(cmd, sizeof(cmd), "cmd /S /C \"\"%s\"\"", expanded);
+		snprintf(cmd, sizeof(cmd), "cmd /C \"%s\"", spec);
 		if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
-		                    DETACHED_PROCESS, NULL, NULL, &si, &pi))
+		                    DETACHED_PROCESS, NULL,
+		                    haveWorkdir ? workdir : NULL,
+		                    &si, &pi))
 		{
 			DWORD err = GetLastError();
 			snprintf(g_launchLastResult, sizeof(g_launchLastResult),
-			         "CreateProcess failed (error %lu): %s", err, expanded);
+			         "CreateProcess failed (error %lu): %s", err, spec);
 			fprintf(stderr, "[launch] %s\n", g_launchLastResult);
 			return false;
 		}
@@ -127,7 +199,8 @@ static bool Launch_DoSpawn(const char* expanded)
 	pid_t pid = fork();
 	if (pid == 0)
 	{
-		ExecLaunch(expanded);
+		if (haveWorkdir) (void)chdir(workdir);
+		ExecLaunch(spec);
 		_exit(127);
 	}
 	else if (pid < 0)
@@ -141,7 +214,7 @@ static bool Launch_DoSpawn(const char* expanded)
 #endif
 
 	snprintf(g_launchLastResult, sizeof(g_launchLastResult),
-	         "Launched: %s", expanded);
+	         "Launched: %s", spec);
 	return true;
 }
 
