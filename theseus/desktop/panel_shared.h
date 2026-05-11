@@ -65,6 +65,7 @@ extern char s_xemuPath[512];
 extern char g_qcowPath[512];
 extern char s_steamPath[512];   // user's Steam install root (contains steamapps/)
 extern char s_retroarchPath[512]; // user's RetroArch install root (contains retroarch + cores/)
+extern bool g_showRetroArchTab;
 
 // ============================================================================
 // Restart Control (defined in sdl_main.cpp)

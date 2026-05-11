@@ -297,6 +297,7 @@ char s_xemuPath[512] = "";
 char g_qcowPath[512] = "";  // global, used by desktop_nodes.cpp for SavedGameGrid
 char s_steamPath[512] = ""; // Steam install root (parent of steamapps/)
 char s_retroarchPath[512] = ""; // RetroArch install root (contains retroarch.exe + cores/)
+bool g_showRetroArchTab = true; // hides the Title Maker RetroArch tab; games stay in games.ini
 
 // Library roots — desktop-only paths to media collections.
 // Read from desktop.ini [Library] section; consumed by audio_sdl.cpp
@@ -338,6 +339,8 @@ void LoadDesktopSettings() {
             strncpy(s_steamPath, line + 10, sizeof(s_steamPath) - 1);
         else if (strncmp(line, "RetroArchPath=", 14) == 0)
             strncpy(s_retroarchPath, line + 14, sizeof(s_retroarchPath) - 1);
+        else if (strncmp(line, "ShowRetroArchTab=", 17) == 0)
+            g_showRetroArchTab = atoi(line + 17) != 0;
         else if (strncmp(line, "CRT_Enabled=", 12) == 0)
             g_crt.enabled = atoi(line + 12) != 0;
         else if (strncmp(line, "CRT_Scanlines=", 14) == 0)
@@ -455,6 +458,7 @@ void SaveDesktopSettings() {
     fprintf(fp, "QcowPath=%s\n", g_qcowPath);
     fprintf(fp, "SteamPath=%s\n", s_steamPath);
     fprintf(fp, "RetroArchPath=%s\n", s_retroarchPath);
+    fprintf(fp, "ShowRetroArchTab=%d\n", g_showRetroArchTab ? 1 : 0);
     fprintf(fp, "StartupMode=%s\n", g_startupMode == 2 ? "development" : g_startupMode == 1 ? "dashboard" : "");
     fprintf(fp, "UseOnScreenKeyboard=%d\n", g_bUseOnScreenKeyboard ? 1 : 0);
     fprintf(fp, "ShowBootAnimation=%d\n",   g_bShowBootAnimation   ? 1 : 0);

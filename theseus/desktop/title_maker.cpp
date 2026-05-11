@@ -569,6 +569,14 @@ void RenderTitleMaker() {
     ImGui::BeginTabBar("TMTabs");
     if (ImGui::BeginTabItem("Games")) {
 
+    if (ImGui::CollapsingHeader("Optional Tabs")) {
+        if (ImGui::Checkbox("RetroArch", &g_showRetroArchTab)) {
+            SaveDesktopSettings();
+        }
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+            "Hiding a tab only hides its authoring UI. Existing entries stay in this list.");
+    }
+
     // xemu path setting
     {
         ImGui::Text("xemu:");
@@ -1396,7 +1404,7 @@ void RenderTitleMaker() {
     ImGui::EndTabItem();
     } // Games tab
 
-    if (ImGui::BeginTabItem("RetroArch")) {
+    if (g_showRetroArchTab && ImGui::BeginTabItem("RetroArch")) {
         // Header: tinted logo on left, project info on right.
         {
             int logoW = 0, logoH = 0;
