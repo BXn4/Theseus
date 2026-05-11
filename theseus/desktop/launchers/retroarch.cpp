@@ -215,6 +215,378 @@ int RetroArch_DiscoverInstall(const char* userOverride,
 	return n;
 }
 
+static bool DirExists(const char* path) {
+	if (!path || !*path) return false;
+	struct stat st;
+	return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static bool FileExists(const char* path) {
+	if (!path || !*path) return false;
+	struct stat st;
+	return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+bool RetroArch_DiscoverPlaylistsDir(const char* installRoot,
+                                     char* outDir, size_t outSize) {
+	if (outSize) outDir[0] = '\0';
+	char buf[600];
+
+	if (installRoot && *installRoot) {
+		snprintf(buf, sizeof(buf), "%s%cplaylists", installRoot, kPathSep);
+		if (DirExists(buf)) { strncpy(outDir, buf, outSize - 1); outDir[outSize - 1] = 0; return true; }
+	}
+
+#ifdef __APPLE__
+	const char* home = getenv("HOME");
+	if (home) {
+		snprintf(buf, sizeof(buf), "%s/Documents/RetroArch/playlists", home);
+		if (DirExists(buf)) { strncpy(outDir, buf, outSize - 1); outDir[outSize - 1] = 0; return true; }
+	}
+#elif !defined(_WIN32)
+	const char* home = getenv("HOME");
+	if (home) {
+		snprintf(buf, sizeof(buf), "%s/.config/retroarch/playlists", home);
+		if (DirExists(buf)) { strncpy(outDir, buf, outSize - 1); outDir[outSize - 1] = 0; return true; }
+		snprintf(buf, sizeof(buf),
+		         "%s/.var/app/org.libretro.RetroArch/config/retroarch/playlists", home);
+		if (DirExists(buf)) { strncpy(outDir, buf, outSize - 1); outDir[outSize - 1] = 0; return true; }
+	}
+#endif
+	return false;
+}
+
+bool RetroArch_FindCoreForSystem(const char* installRoot, const char* systemName,
+                                  char* outCoreFile, size_t outSize) {
+	if (outSize) outCoreFile[0] = '\0';
+	if (!installRoot || !*installRoot || !systemName || !*systemName) return false;
+
+#ifdef _WIN32
+	const char* coreExt = ".dll";
+#elif defined(__APPLE__)
+	const char* coreExt = ".dylib";
+#else
+	const char* coreExt = ".so";
+#endif
+
+	char infoDir[600], coresDir[600];
+	snprintf(infoDir,  sizeof(infoDir),  "%s%cinfo",  installRoot, kPathSep);
+	snprintf(coresDir, sizeof(coresDir), "%s%ccores", installRoot, kPathSep);
+
+	bool found = false;
+	auto tryFile = [&](const char* infoName) {
+		char infoPath[800];
+		snprintf(infoPath, sizeof(infoPath), "%s%c%s", infoDir, kPathSep, infoName);
+		FILE* fp = fopen(infoPath, "r");
+		if (!fp) return;
+		char line[512];
+		while (fgets(line, sizeof(line), fp) && !found) {
+			const char* eq = strchr(line, '=');
+			if (!eq) continue;
+			const char* keyEnd = eq;
+			while (keyEnd > line && (keyEnd[-1] == ' ' || keyEnd[-1] == '\t')) keyEnd--;
+			const char* keyStart = line;
+			while (keyStart < keyEnd && (*keyStart == ' ' || *keyStart == '\t')) keyStart++;
+			size_t klen = (size_t)(keyEnd - keyStart);
+			if (klen != strlen("systemname") ||
+			    strncmp(keyStart, "systemname", klen) != 0) continue;
+			const char* q = strchr(eq, '"');
+			if (!q) continue;
+			q++;
+			const char* qEnd = strchr(q, '"');
+			if (!qEnd) continue;
+			size_t vlen = (size_t)(qEnd - q);
+			if (vlen != strlen(systemName) || strncmp(q, systemName, vlen) != 0) continue;
+
+			char coreFile[256];
+			strncpy(coreFile, infoName, sizeof(coreFile) - 1);
+			coreFile[sizeof(coreFile) - 1] = 0;
+			char* dot = strrchr(coreFile, '.');
+			if (dot) snprintf(dot, sizeof(coreFile) - (dot - coreFile), "%s", coreExt);
+			char corePath[900];
+			snprintf(corePath, sizeof(corePath), "%s%c%s", coresDir, kPathSep, coreFile);
+			if (FileExists(corePath)) {
+				strncpy(outCoreFile, coreFile, outSize - 1);
+				outCoreFile[outSize - 1] = 0;
+				found = true;
+			}
+		}
+		fclose(fp);
+	};
+
+#ifdef _WIN32
+	char glob[700];
+	snprintf(glob, sizeof(glob), "%s\\*.info", infoDir);
+	WIN32_FIND_DATAA fd;
+	HANDLE h = FindFirstFileA(glob, &fd);
+	if (h != INVALID_HANDLE_VALUE) {
+		do {
+			if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+			tryFile(fd.cFileName);
+			if (found) break;
+		} while (FindNextFileA(h, &fd));
+		FindClose(h);
+	}
+#else
+	DIR* d = opendir(infoDir);
+	if (d) {
+		struct dirent* ent;
+		while ((ent = readdir(d)) && !found) {
+			size_t len = strlen(ent->d_name);
+			if (len < 5 || strcmp(ent->d_name + len - 5, ".info") != 0) continue;
+			tryFile(ent->d_name);
+		}
+		closedir(d);
+	}
+#endif
+	return found;
+}
+
+bool RetroArch_GetSystemForCore(const char* installRoot, const char* coreFilename,
+                                 char* outSystem, size_t outSize) {
+	if (outSize) outSystem[0] = '\0';
+	if (!installRoot || !*installRoot || !coreFilename || !*coreFilename) return false;
+
+	char infoName[256];
+	strncpy(infoName, coreFilename, sizeof(infoName) - 1);
+	infoName[sizeof(infoName) - 1] = 0;
+	char* dot = strrchr(infoName, '.');
+	if (dot) snprintf(dot, sizeof(infoName) - (dot - infoName), ".info");
+	else {
+		size_t l = strlen(infoName);
+		if (l + 5 < sizeof(infoName)) strcpy(infoName + l, ".info");
+	}
+
+	char infoPath[800];
+	snprintf(infoPath, sizeof(infoPath), "%s%cinfo%c%s",
+	         installRoot, kPathSep, kPathSep, infoName);
+
+	FILE* fp = fopen(infoPath, "r");
+	if (!fp) return false;
+	bool found = false;
+	char line[512];
+	while (fgets(line, sizeof(line), fp)) {
+		const char* eq = strchr(line, '=');
+		if (!eq) continue;
+		const char* keyEnd = eq;
+		while (keyEnd > line && (keyEnd[-1] == ' ' || keyEnd[-1] == '\t')) keyEnd--;
+		const char* keyStart = line;
+		while (keyStart < keyEnd && (*keyStart == ' ' || *keyStart == '\t')) keyStart++;
+		size_t klen = (size_t)(keyEnd - keyStart);
+		if (klen != strlen("systemname") ||
+		    strncmp(keyStart, "systemname", klen) != 0) continue;
+		const char* q = strchr(eq, '"');
+		if (!q) continue;
+		q++;
+		const char* qEnd = strchr(q, '"');
+		if (!qEnd) continue;
+		size_t vlen = (size_t)(qEnd - q);
+		if (vlen >= outSize) vlen = outSize - 1;
+		memcpy(outSystem, q, vlen);
+		outSystem[vlen] = '\0';
+		found = true;
+		break;
+	}
+	fclose(fp);
+	return found;
+}
+
+static void SanitizeThumbnailKey(const char* in, char* out, size_t outSize) {
+	size_t op = 0;
+	for (const char* p = in; *p && op + 1 < outSize; p++) {
+		char c = *p;
+		bool replace = (c == '&' || c == '*' || c == '/' || c == ':' ||
+		                c == '`' || c == '<' || c == '>' || c == '?' ||
+		                c == '\\' || c == '|');
+		out[op++] = replace ? '_' : c;
+	}
+	out[op] = '\0';
+}
+
+bool RetroArch_FindBoxart(const char* installRoot,
+                          const char* dbName, const char* label,
+                          const char* contentPath,
+                          char* outPath, size_t outSize) {
+	if (outSize) outPath[0] = '\0';
+	if (!installRoot || !*installRoot || !dbName || !*dbName) return false;
+
+	char system[256];
+	strncpy(system, dbName, sizeof(system) - 1);
+	system[sizeof(system) - 1] = 0;
+	size_t sl = strlen(system);
+	if (sl > 4 && strcmp(system + sl - 4, ".lpl") == 0) system[sl - 4] = '\0';
+
+	char keys[2][512];
+	int keyCount = 0;
+
+	if (label && *label) {
+		SanitizeThumbnailKey(label, keys[keyCount], sizeof(keys[keyCount]));
+		keyCount++;
+	}
+
+	if (contentPath && *contentPath) {
+		const char* fwd = strrchr(contentPath, '/');
+		const char* back = strrchr(contentPath, '\\');
+		const char* fname = (fwd > back) ? fwd : back;
+		fname = fname ? fname + 1 : contentPath;
+		const char* hash = strchr(fname, '#');
+		const char* baseSrc = hash ? hash + 1 : fname;
+		char base[512];
+		strncpy(base, baseSrc, sizeof(base) - 1);
+		base[sizeof(base) - 1] = 0;
+		char* dot = strrchr(base, '.');
+		if (dot) *dot = '\0';
+		SanitizeThumbnailKey(base, keys[keyCount], sizeof(keys[keyCount]));
+		keyCount++;
+	}
+
+	for (int i = 0; i < keyCount; i++) {
+		char path[1024];
+		snprintf(path, sizeof(path), "%s%cthumbnails%c%s%cNamed_Boxarts%c%s.png",
+		         installRoot, kPathSep, kPathSep, system, kPathSep, kPathSep, keys[i]);
+		if (FileExists(path)) {
+			strncpy(outPath, path, outSize - 1);
+			outPath[outSize - 1] = 0;
+			return true;
+		}
+	}
+	return false;
+}
+
+namespace {
+
+bool ExtractStringField(const char* start, const char* end,
+                        const char* key, char* out, size_t outSize) {
+	if (outSize) out[0] = '\0';
+	char pattern[64];
+	int pn = snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+	if (pn <= 0) return false;
+	for (const char* p = start; p + pn < end; p++) {
+		if (strncmp(p, pattern, pn) != 0) continue;
+		p += pn;
+		while (p < end && (*p == ' ' || *p == '\t')) p++;
+		if (p >= end || *p != ':') continue;
+		p++;
+		while (p < end && (*p == ' ' || *p == '\t')) p++;
+		if (p >= end || *p != '"') continue;
+		p++;
+		size_t op = 0;
+		while (p < end && *p != '"' && op + 1 < outSize) {
+			if (*p == '\\' && p + 1 < end) {
+				p++;
+				char e = *p;
+				if      (e == 'n')  out[op++] = '\n';
+				else if (e == 't')  out[op++] = '\t';
+				else if (e == '"')  out[op++] = '"';
+				else if (e == '\\') out[op++] = '\\';
+				else                out[op++] = e;
+			} else {
+				out[op++] = *p;
+			}
+			p++;
+		}
+		out[op] = '\0';
+		return true;
+	}
+	return false;
+}
+
+int WalkOnePlaylist(const char* filePath, RetroArchItemCB cb, void* userdata) {
+	FILE* fp = fopen(filePath, "rb");
+	if (!fp) return 0;
+	fseek(fp, 0, SEEK_END);
+	long sz = ftell(fp);
+	if (sz <= 0 || sz > 16 * 1024 * 1024) { fclose(fp); return 0; }
+	fseek(fp, 0, SEEK_SET);
+	char* buf = (char*)malloc((size_t)sz + 1);
+	if (!buf) { fclose(fp); return 0; }
+	size_t r = fread(buf, 1, (size_t)sz, fp);
+	fclose(fp);
+	buf[r] = '\0';
+	const char* end = buf + r;
+
+	const char* p = strstr(buf, "\"items\"");
+	if (!p) { free(buf); return 0; }
+	p = strchr(p, '[');
+	if (!p) { free(buf); return 0; }
+	p++;
+
+	int count = 0;
+	while (p < end) {
+		while (p < end && *p != '{' && *p != ']') p++;
+		if (p >= end || *p == ']') break;
+		const char* objStart = p;
+		int depth = 1;
+		p++;
+		while (p < end && depth > 0) {
+			if (*p == '"') {
+				p++;
+				while (p < end && *p != '"') {
+					if (*p == '\\' && p + 1 < end) p += 2;
+					else p++;
+				}
+			}
+			else if (*p == '{') depth++;
+			else if (*p == '}') depth--;
+			if (p < end) p++;
+		}
+		const char* objEnd = p;
+
+		char label[512] = "", path2[1024] = "", dbName[256] = "",
+		     coreName[256] = "", corePath[512] = "";
+		ExtractStringField(objStart, objEnd, "label",     label,    sizeof(label));
+		ExtractStringField(objStart, objEnd, "path",      path2,    sizeof(path2));
+		ExtractStringField(objStart, objEnd, "db_name",   dbName,   sizeof(dbName));
+		ExtractStringField(objStart, objEnd, "core_name", coreName, sizeof(coreName));
+		ExtractStringField(objStart, objEnd, "core_path", corePath, sizeof(corePath));
+
+		if (label[0] && path2[0]) {
+			cb(label, path2, dbName, coreName, corePath, userdata);
+			count++;
+		}
+	}
+	free(buf);
+	return count;
+}
+
+} // namespace
+
+int RetroArch_WalkPlaylists(const char* playlistsDir,
+                             RetroArchItemCB cb, void* userdata) {
+	if (!playlistsDir || !*playlistsDir || !cb) return 0;
+	int total = 0;
+
+#ifdef _WIN32
+	char glob[700];
+	snprintf(glob, sizeof(glob), "%s\\*.lpl", playlistsDir);
+	WIN32_FIND_DATAA fd;
+	HANDLE h = FindFirstFileA(glob, &fd);
+	if (h != INVALID_HANDLE_VALUE) {
+		do {
+			if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+			char filePath[900];
+			snprintf(filePath, sizeof(filePath), "%s\\%s", playlistsDir, fd.cFileName);
+			total += WalkOnePlaylist(filePath, cb, userdata);
+		} while (FindNextFileA(h, &fd));
+		FindClose(h);
+	}
+#else
+	DIR* d = opendir(playlistsDir);
+	if (d) {
+		struct dirent* ent;
+		while ((ent = readdir(d))) {
+			size_t len = strlen(ent->d_name);
+			if (len < 4 || strcmp(ent->d_name + len - 4, ".lpl") != 0) continue;
+			char filePath[900];
+			snprintf(filePath, sizeof(filePath), "%s/%s", playlistsDir, ent->d_name);
+			total += WalkOnePlaylist(filePath, cb, userdata);
+		}
+		closedir(d);
+	}
+#endif
+	return total;
+}
+
 int RetroArch_EnumerateCores(const char* installRoot,
                               char outCores[][256], int maxCores) {
 	if (!installRoot || !*installRoot || !outCores || maxCores <= 0) return 0;

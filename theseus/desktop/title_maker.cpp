@@ -138,6 +138,95 @@ static void TM_UrlEncode(const char* in, char* out, size_t outSize) {
     out[op] = '\0';
 }
 
+struct TM_RAImportCtx {
+    int added;
+    int skipped;
+    char installRoot[512];
+};
+
+static void TM_RAImportItem(const char* label, const char* path,
+                            const char* dbName, const char* coreName,
+                            const char* corePath, void* ud) {
+    TM_RAImportCtx* ctx = (TM_RAImportCtx*)ud;
+
+    char coreFile[256] = "";
+    bool detect = (corePath[0] == 0 || strcmp(corePath, "DETECT") == 0 ||
+                   strcmp(coreName, "DETECT") == 0);
+    if (detect) {
+        char sysName[256];
+        strncpy(sysName, dbName, sizeof(sysName) - 1);
+        sysName[sizeof(sysName) - 1] = 0;
+        size_t sl = strlen(sysName);
+        if (sl > 4 && strcmp(sysName + sl - 4, ".lpl") == 0) sysName[sl - 4] = 0;
+        if (!RetroArch_FindCoreForSystem(ctx->installRoot, sysName,
+                                          coreFile, sizeof(coreFile))) {
+            ctx->skipped++;
+            return;
+        }
+    } else {
+        const char* fwd  = strrchr(corePath, '/');
+        const char* back = strrchr(corePath, '\\');
+        const char* fname = (fwd > back) ? fwd : back;
+        fname = fname ? fname + 1 : corePath;
+        strncpy(coreFile, fname, sizeof(coreFile) - 1);
+        coreFile[sizeof(coreFile) - 1] = 0;
+    }
+
+    char encCore[768], encContent[768];
+    TM_UrlEncode(coreFile, encCore,    sizeof(encCore));
+    TM_UrlEncode(path,     encContent, sizeof(encContent));
+
+    char launch[2048];
+    snprintf(launch, sizeof(launch),
+             "retroarch://run?core=%s&content=%s", encCore, encContent);
+
+    for (int i = 0; i < g_vgames.count; i++) {
+        if (g_vgames.games[i].valid &&
+            strcmp(g_vgames.games[i].launch, launch) == 0) {
+            const char* titleID = g_vgames.games[i].titleID;
+            char iconPng[600], iconJpg[600];
+            snprintf(iconPng, sizeof(iconPng), "%s/%s.png", VGAMES_ICONS, titleID);
+            snprintf(iconJpg, sizeof(iconJpg), "%s/%s.jpg", VGAMES_ICONS, titleID);
+            struct stat st;
+            bool haveIcon = (stat(iconPng, &st) == 0) || (stat(iconJpg, &st) == 0);
+            if (!haveIcon) {
+                char boxart[1024];
+                if (RetroArch_FindBoxart(ctx->installRoot, dbName, label, path,
+                                          boxart, sizeof(boxart))) {
+                    TM_EnsureDir(VGAMES_ICONS);
+                    TM_CopyFile(boxart, iconPng);
+                }
+            }
+            ctx->skipped++;
+            return;
+        }
+    }
+
+    extern int Title_SanitizeName(const char*, char*, size_t);
+    char cleanName[128];
+    Title_SanitizeName(label, cleanName, sizeof(cleanName));
+    if (!cleanName[0]) {
+        ctx->skipped++;
+        return;
+    }
+
+    char genID[16];
+    snprintf(genID, sizeof(genID), "%08x", (unsigned)time(NULL) + (unsigned)ctx->added);
+
+    VGames_Add(cleanName, genID, launch, "E", "Emulators");
+
+    char boxart[1024];
+    if (RetroArch_FindBoxart(ctx->installRoot, dbName, label, path,
+                              boxart, sizeof(boxart))) {
+        TM_EnsureDir(VGAMES_ICONS);
+        char dst[600];
+        snprintf(dst, sizeof(dst), "%s/%s.png", VGAMES_ICONS, genID);
+        TM_CopyFile(boxart, dst);
+    }
+
+    ctx->added++;
+}
+
 // Read Icons.ini into parallel key/value arrays. Returns entry count.
 #define TM_MAX_ICONS 512
 static int TM_ReadIconsIni(char keys[][128], char vals[][128]) {
@@ -1243,6 +1332,8 @@ void RenderTitleMaker() {
             std::string sel = s_raContentBrowser.GetSelected().string();
             strncpy(s_raContent, sel.c_str(), sizeof(s_raContent) - 1);
             s_raContent[sizeof(s_raContent) - 1] = 0;
+            if (!s_raTitle[0])
+                TM_DeriveRomTitle(s_raContent, s_raTitle, sizeof(s_raTitle));
             s_raContentBrowser.ClearSelected();
         }
 
@@ -1270,6 +1361,24 @@ void RenderTitleMaker() {
                 s_statusTime = 4.0f;
             } else {
                 VGames_Add(cleanName, genID, launch, "E", "Emulators");
+
+                char system[256];
+                if (RetroArch_GetSystemForCore(s_retroarchPath,
+                                                s_raCores[s_raCoreIdx],
+                                                system, sizeof(system))) {
+                    char dbNameFake[300];
+                    snprintf(dbNameFake, sizeof(dbNameFake), "%s.lpl", system);
+                    char boxart[1024];
+                    if (RetroArch_FindBoxart(s_retroarchPath, dbNameFake,
+                                              cleanName, s_raContent,
+                                              boxart, sizeof(boxart))) {
+                        TM_EnsureDir(VGAMES_ICONS);
+                        char dst[600];
+                        snprintf(dst, sizeof(dst), "%s/%s.png", VGAMES_ICONS, genID);
+                        TM_CopyFile(boxart, dst);
+                    }
+                }
+
                 VGames_Save();
                 UDataSynth_RebuildAll();
                 snprintf(s_statusMsg, sizeof(s_statusMsg),
@@ -1281,6 +1390,33 @@ void RenderTitleMaker() {
             }
         }
         if (!canAdd) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        bool canImport = s_retroarchPath[0] != 0;
+        if (!canImport) ImGui::BeginDisabled();
+        if (ImGui::Button("Import Recent Titles")) {
+            char playlistsDir[600] = "";
+            if (!RetroArch_DiscoverPlaylistsDir(s_retroarchPath,
+                                                 playlistsDir, sizeof(playlistsDir))) {
+                snprintf(s_statusMsg, sizeof(s_statusMsg),
+                         "No RetroArch playlists directory found");
+                s_statusTime = 4.0f;
+            } else {
+                TM_RAImportCtx ctx = {};
+                strncpy(ctx.installRoot, s_retroarchPath, sizeof(ctx.installRoot) - 1);
+                int total = RetroArch_WalkPlaylists(playlistsDir, TM_RAImportItem, &ctx);
+                if (ctx.added > 0) {
+                    VGames_Save();
+                    UDataSynth_RebuildAll();
+                    s_needsScan = true;
+                }
+                snprintf(s_statusMsg, sizeof(s_statusMsg),
+                         "Imported %d (%d skipped, %d total in playlists)",
+                         ctx.added, ctx.skipped, total);
+                s_statusTime = 5.0f;
+            }
+        }
+        if (!canImport) ImGui::EndDisabled();
 
         ImGui::EndTabItem();
     } // RetroArch tab
