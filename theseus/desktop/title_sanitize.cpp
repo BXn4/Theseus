@@ -40,6 +40,18 @@ static int Utf8Decode(const unsigned char* p, unsigned int* outCP) {
 // special-case substitutions cover the typographic chars commonly found
 // in Steam labels and ISO TitleNames.
 static int RemapCodepoint(unsigned int cp, char* out) {
+	// Brackets and = break INI parsing if they show up in display names
+	// (ROM tags like [!] mangle the section header). Swap them out so
+	// storage is safe. Launch URLs encode separately so they keep the
+	// original characters in the path.
+	switch (cp) {
+		case 0x5B:                                 // [
+			out[0] = '('; return 1;
+		case 0x5D:                                 // ]
+			out[0] = ')'; return 1;
+		case 0x3D:                                 // =
+			out[0] = '-'; return 1;
+	}
 	// Pass-through ranges.
 	if (cp >= 0x20 && cp <= 0x7E) { out[0] = (char)cp; return 1; }
 	// Latin-1 supplement (e a o n u ... and most Latin diacritics).

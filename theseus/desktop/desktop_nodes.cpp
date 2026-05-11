@@ -1720,7 +1720,7 @@ static bool ParseXboxMetaValue(const char* xboxPath, const char* key, char* outB
 		if (nextLine) *nextLine = 0;
 
 		if (line[0] == '[') {
-			char* end = strchr(line, ']');
+			char* end = strrchr(line, ']');
 			if (end) {
 				*end = 0;
 				inTargetSection = (strcasecmp(line + 1, szLangCode) == 0);

@@ -98,7 +98,10 @@ bool CSettingsFile::Open(const TCHAR* szFile)
 		{
 			TCHAR szName [256];
 			TCHAR* pchName = szName;
-			TCHAR szValue [1024];
+			// Bumped from 1024. cache.ini packs 25 joined titles per
+			// segment, regularly exceeds 2KB. 16KB is well over what
+			// any sane ini value needs.
+			TCHAR szValue [16384];
 			TCHAR* pchValue = szValue;
 
 			while (*pch != '\0' && *pch != '\r' && *pch != '\n' && *pch != '=')
@@ -182,35 +185,45 @@ bool CSettingsFile::Save()
 
 		DWORD dw;
 		CSettingsFileSection* pSection;
+		// Stream wide -> ANSI to disk in chunks. The old code reused a
+		// 1030-byte stack buffer for the whole "value\r\n" line, which
+		// blew up on cache.ini segments (25 joined titles can easily
+		// exceed 1KB) and smashed the stack.
+		char szBuf [1024];
+		auto FlushBuf = [&](char*& pch) {
+			if (pch > szBuf) {
+				WriteFile(hFile, szBuf, (DWORD)(pch - szBuf), &dw, NULL);
+				pch = szBuf;
+			}
+		};
+		auto AppendWide = [&](char*& pch, const TCHAR* pwch) {
+			while (*pwch != 0) {
+				if (pch >= szBuf + sizeof(szBuf)) FlushBuf(pch);
+				*pch++ = (char)*pwch++;
+			}
+		};
+		auto AppendChar = [&](char*& pch, char c) {
+			if (pch >= szBuf + sizeof(szBuf)) FlushBuf(pch);
+			*pch++ = c;
+		};
 		for (pSection = m_sections; pSection != NULL; pSection = pSection->m_next)
 		{
-			char szBuf [1030];
 			char* pch = szBuf;
-			TCHAR* pwch = pSection->m_name;
-			*pch++ = '[';
-			while (*pwch != 0)
-				*pch++ = (char)*pwch++;
-			*pch++ = ']';
-			*pch++ = '\r';
-			*pch++ = '\n';
-			WriteFile(hFile, szBuf, (DWORD)(pch - szBuf), &dw, NULL);
+			AppendChar(pch, '[');
+			AppendWide(pch, pSection->m_name);
+			AppendChar(pch, ']');
+			AppendChar(pch, '\r');
+			AppendChar(pch, '\n');
+			FlushBuf(pch);
 
 			for (CSettingsFileValue* pValue = pSection->m_values; pValue != NULL; pValue = pValue->m_next)
 			{
-				pch = szBuf;
-				pwch = pValue->m_name;
-				while (*pwch != 0)
-					*pch++ = (char)*pwch++;
-				*pch++ = '=';
-				WriteFile(hFile, szBuf, (DWORD)(pch - szBuf), &dw, NULL);
-
-				pch = szBuf;
-				pwch = pValue->m_value;
-				while (*pwch != 0)
-					*pch++ = (char)*pwch++;
-				*pch++ = '\r';
-				*pch++ = '\n';
-				WriteFile(hFile, szBuf, (DWORD)(pch - szBuf), &dw, NULL);
+				AppendWide(pch, pValue->m_name);
+				AppendChar(pch, '=');
+				AppendWide(pch, pValue->m_value);
+				AppendChar(pch, '\r');
+				AppendChar(pch, '\n');
+				FlushBuf(pch);
 			}
 		}
 

@@ -521,6 +521,9 @@ public:
 
 inline HANDLE TheseusCreateFile(const TCHAR* szFileName, DWORD dwDesiredAccess, DWORD dwShareMode, LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes = 0, HANDLE hTemplateFile = NULL)
 {
+	// null path would crash inside CleanFilePath. Bail before we get there.
+	if (!szFileName)
+		return INVALID_HANDLE_VALUE;
 	FSCHAR sszFileName [MAX_PATH];
 	CleanFilePath(sszFileName, szFileName);
 #ifdef _XBOX

@@ -253,6 +253,14 @@ static void TM_RAImportItem(const char* label, const char* path,
         return;
     }
 
+    // Dedup by name. Same game often shows up twice in playlists (foo.zip
+    // vs foo.zip#inner.nes, system playlist vs history) and we don't want
+    // two entries for it.
+    if (VGames_FindByName(cleanName) >= 0) {
+        ctx->skipped++;
+        return;
+    }
+
     char genID[16];
     snprintf(genID, sizeof(genID), "%08x", (unsigned)time(NULL) + (unsigned)ctx->added);
 
@@ -283,7 +291,9 @@ static int TM_ReadIconsIni(char keys[][128], char vals[][128]) {
     while (fgets(line, sizeof(line), fp) && count < TM_MAX_ICONS) {
         char* nl = strchr(line, '\n'); if (nl) *nl = 0;
         char* cr = strchr(line, '\r'); if (cr) *cr = 0;
-        if (line[0] == '[' || line[0] == 0) continue;
+        if (line[0] == 0) continue;
+        // Skip anything without an =. We used to skip lines starting with [
+        // but ROM names can start with [ too.
         char* eq = strchr(line, '=');
         if (eq) {
             *eq = 0;

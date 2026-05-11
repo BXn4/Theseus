@@ -52,9 +52,10 @@ inline void VGames_Load() {
         // Skip empty lines
         if (line[0] == 0) continue;
 
-        // Section header: [Game Name]
+        // Section header. strrchr so ROM tags like [!] inside the name
+        // don't get truncated at the first ].
         if (line[0] == '[') {
-            char* end = strchr(line, ']');
+            char* end = strrchr(line, ']');
             if (end && g_vgames.count < VGAMES_MAX) {
                 cur = &g_vgames.games[g_vgames.count];
                 memset(cur, 0, sizeof(*cur));
