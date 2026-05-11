@@ -305,6 +305,115 @@ static void TM_WriteIconsIni(char keys[][128], char vals[][128], int count) {
     fclose(fp);
 }
 
+// Open a URL via the platform's default handler. Falls through the
+// same dispatch the launch overlay uses.
+static void TM_OpenUrl(const char* url) {
+    if (!url || !*url) return;
+    extern void DesktopLaunch(const char*);
+    DesktopLaunch(url);
+}
+
+// Load <retroarchInstall>/assets/ozone/png/retroarch.png into a GL
+// texture, cached per resolved path. Returns 0 on failure.
+static unsigned int TM_LoadRetroArchLogo(const char* installPath, int* outW, int* outH) {
+    static unsigned int s_tex = 0;
+    static char s_path[600] = "";
+    static int s_w = 0, s_h = 0;
+
+    if (outW) *outW = 0;
+    if (outH) *outH = 0;
+    if (!installPath || !*installPath) return 0;
+
+    char probe[800];
+    snprintf(probe, sizeof(probe), "%s/assets/ozone/png/retroarch.png", installPath);
+    if (strcmp(probe, s_path) == 0) {
+        if (outW) *outW = s_w;
+        if (outH) *outH = s_h;
+        return s_tex;
+    }
+
+    if (s_tex) { glDeleteTextures(1, &s_tex); s_tex = 0; }
+    strncpy(s_path, probe, sizeof(s_path) - 1);
+    s_path[sizeof(s_path) - 1] = 0;
+    s_w = s_h = 0;
+
+    int w = 0, h = 0, ch = 0;
+    unsigned char* pixels = stbi_load(probe, &w, &h, &ch, 4);
+    if (!pixels) return 0;
+
+    glGenTextures(1, &s_tex);
+    glBindTexture(GL_TEXTURE_2D, s_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    stbi_image_free(pixels);
+
+    s_w = w;
+    s_h = h;
+    if (outW) *outW = w;
+    if (outH) *outH = h;
+    return s_tex;
+}
+
+// Pull a "(Region)" tag out of a title's parenthetical metadata.
+// Recognises common No-Intro / TOSEC region markers; returns "" if
+// nothing matches.
+static void TM_DeriveRegion(const char* name, char* out, size_t outSize) {
+    if (outSize) out[0] = 0;
+    if (!name) return;
+    static const char* kRegions[] = {
+        "USA", "Japan", "Europe", "World", "USA, Europe",
+        "JP", "EU", "US", "PAL", "NTSC", "Asia", "Korea",
+        "Australia", "Brazil", "Germany", "France", "Spain",
+        "Italy", "China", "Taiwan", "Unl", "Proto", 0
+    };
+    for (int i = 0; kRegions[i]; i++) {
+        char needle[40];
+        snprintf(needle, sizeof(needle), "(%s)", kRegions[i]);
+        if (strstr(name, needle)) {
+            strncpy(out, kRegions[i], outSize - 1);
+            out[outSize - 1] = 0;
+            return;
+        }
+    }
+}
+
+// Extract a urlencoded field value from a retroarch:// spec into out.
+// Returns true if the key was found.
+static bool TM_ParseRetroArchField(const char* launch, const char* key, char* out, size_t outSize) {
+    if (outSize) out[0] = 0;
+    if (!launch || !key) return false;
+    char needle[64];
+    snprintf(needle, sizeof(needle), "%s=", key);
+    const char* p = strstr(launch, needle);
+    if (!p) return false;
+    p += strlen(needle);
+    const char* end = strchr(p, '&');
+    if (!end) end = p + strlen(p);
+    size_t op = 0;
+    while (p < end && op + 1 < outSize) {
+        if (*p == '%' && p + 2 < end) {
+            auto hv = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+                if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+                return -1;
+            };
+            int hi = hv(p[1]), lo = hv(p[2]);
+            if (hi >= 0 && lo >= 0) {
+                out[op++] = (char)((hi << 4) | lo);
+                p += 3;
+                continue;
+            }
+        }
+        out[op++] = *p++;
+    }
+    out[op] = 0;
+    return true;
+}
+
 // Read Icons.ini, upsert one name -> titleID mapping, write back.
 // harddrive.xap reads this to route a tile's display name back to the
 // right icon file under Configs/icons/.
@@ -853,7 +962,7 @@ void RenderTitleMaker() {
         Title_SanitizeName(s_newTitleName, cleanNew, sizeof(cleanNew));
         if (!cleanNew[0]) {
             snprintf(s_statusMsg, sizeof(s_statusMsg),
-                     "Title \"%s\" sanitizes to empty -- pick another", s_newTitleName);
+                     "Title \"%s\" sanitizes to empty, pick another", s_newTitleName);
             s_statusTime = 4.0f;
         } else {
             VGames_Add(cleanNew, genID, "", "E", newCat);
@@ -1288,6 +1397,33 @@ void RenderTitleMaker() {
     } // Games tab
 
     if (ImGui::BeginTabItem("RetroArch")) {
+        // Header: tinted logo on left, project info on right.
+        {
+            int logoW = 0, logoH = 0;
+            unsigned int logo = TM_LoadRetroArchLogo(s_retroarchPath, &logoW, &logoH);
+            float headerH = 64.0f;
+            float logoDisplayW = 0;
+            if (logo && logoH > 0) {
+                float scale = headerH / (float)logoH;
+                logoDisplayW = (float)logoW * scale;
+                ImGui::Image((ImTextureID)(intptr_t)logo,
+                             ImVec2(logoDisplayW, headerH),
+                             ImVec2(0, 0), ImVec2(1, 1),
+                             ImVec4(0.4f, 1.0f, 0.4f, 1.0f));
+                ImGui::SameLine();
+            }
+            ImGui::BeginGroup();
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "RetroArch");
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                "Add ROMs and let RetroArch's libretro cores run them.");
+            ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "https://www.retroarch.com");
+            if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (ImGui::IsItemClicked()) TM_OpenUrl("https://www.retroarch.com");
+            ImGui::EndGroup();
+        }
+        ImGui::Separator();
+
         // Install path setting
         {
             ImGui::Text("Install:");
@@ -1343,11 +1479,23 @@ void RenderTitleMaker() {
         static int  s_raCoreCount       = 0;
         static int  s_raCoreIdx         = -1;
         static char s_raLastScannedPath[512] = "";
+        static int  s_raSelectedVi      = -1;
+        static GLuint s_raDetailsTex    = 0;
+        static char s_raDetailsTexPath[600] = "";
+        static int  s_raDetailsTexW = 0;
+        static int  s_raDetailsTexH = 0;
         static ImGui::FileBrowser s_raContentBrowser(ImGuiFileBrowserFlags_CloseOnEsc);
+        static ImGui::FileBrowser s_raIconBrowser(ImGuiFileBrowserFlags_CloseOnEsc);
         static bool s_raContentBrowserInit = false;
+        static bool s_raIconBrowserInit = false;
         if (!s_raContentBrowserInit) {
             s_raContentBrowser.SetTitle("Select ROM / content file");
             s_raContentBrowserInit = true;
+        }
+        if (!s_raIconBrowserInit) {
+            s_raIconBrowser.SetTitle("Select icon image");
+            s_raIconBrowser.SetTypeFilters({ ".jpg", ".jpeg", ".png", ".bmp", ".JPG", ".PNG" });
+            s_raIconBrowserInit = true;
         }
 
         if (strcmp(s_raLastScannedPath, s_retroarchPath) != 0) {
@@ -1358,6 +1506,14 @@ void RenderTitleMaker() {
                 : 0;
             s_raCoreIdx = -1;
         }
+
+        // Selection may have been removed; clamp.
+        if (s_raSelectedVi >= 0 &&
+            (s_raSelectedVi >= g_vgames.count || !g_vgames.games[s_raSelectedVi].valid))
+            s_raSelectedVi = -1;
+
+        const float kFormPanelH = 200.0f;
+        ImGui::BeginChild("##raform", ImVec2(380, kFormPanelH), false);
 
         ImGui::Text("Add Game");
 
@@ -1426,7 +1582,7 @@ void RenderTitleMaker() {
             Title_SanitizeName(s_raTitle, cleanName, sizeof(cleanName));
             if (!cleanName[0]) {
                 snprintf(s_statusMsg, sizeof(s_statusMsg),
-                         "Title sanitizes to empty -- pick another");
+                         "Title sanitizes to empty, pick another");
                 s_statusTime = 4.0f;
             } else {
                 VGames_Add(cleanName, genID, launch, "E", "Emulators");
@@ -1487,6 +1643,208 @@ void RenderTitleMaker() {
             }
         }
         if (!canImport) ImGui::EndDisabled();
+
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("##radetails", ImVec2(0, kFormPanelH), true);
+
+        if (s_raSelectedVi < 0) {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                "Select an entry below to view details.");
+        } else {
+            VirtualGame& g = g_vgames.games[s_raSelectedVi];
+
+            char iconPng[600], iconJpg[600];
+            snprintf(iconPng, sizeof(iconPng), "Configs/icons/%s.png", g.titleID);
+            snprintf(iconJpg, sizeof(iconJpg), "Configs/icons/%s.jpg", g.titleID);
+            struct stat st;
+            const char* iconPath = (stat(iconPng, &st) == 0) ? iconPng
+                                 : (stat(iconJpg, &st) == 0) ? iconJpg : 0;
+
+            if (iconPath && strcmp(iconPath, s_raDetailsTexPath) != 0) {
+                if (s_raDetailsTex) { glDeleteTextures(1, &s_raDetailsTex); s_raDetailsTex = 0; }
+                int w = 0, h = 0, ch = 0;
+                unsigned char* pixels = stbi_load(iconPath, &w, &h, &ch, 4);
+                if (pixels) {
+                    glGenTextures(1, &s_raDetailsTex);
+                    glBindTexture(GL_TEXTURE_2D, s_raDetailsTex);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+                    stbi_image_free(pixels);
+                    s_raDetailsTexW = w;
+                    s_raDetailsTexH = h;
+                }
+                strncpy(s_raDetailsTexPath, iconPath, sizeof(s_raDetailsTexPath) - 1);
+                s_raDetailsTexPath[sizeof(s_raDetailsTexPath) - 1] = 0;
+            } else if (!iconPath) {
+                if (s_raDetailsTex) { glDeleteTextures(1, &s_raDetailsTex); s_raDetailsTex = 0; }
+                s_raDetailsTexPath[0] = 0;
+            }
+
+            if (s_raDetailsTex) {
+                float maxSide = 128.0f;
+                float aspect = s_raDetailsTexH > 0
+                    ? (float)s_raDetailsTexW / (float)s_raDetailsTexH : 1.0f;
+                float dispW = (aspect >= 1.0f) ? maxSide : maxSide * aspect;
+                float dispH = (aspect >= 1.0f) ? maxSide / aspect : maxSide;
+                ImGui::Image((ImTextureID)(intptr_t)s_raDetailsTex, ImVec2(dispW, dispH));
+            } else {
+                ImGui::Dummy(ImVec2(128, 128));
+            }
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", g.name);
+            char region[64];
+            TM_DeriveRegion(g.name, region, sizeof(region));
+            ImGui::Text("Region: %s", region[0] ? region : "(unknown)");
+            char coreNow[256];
+            TM_ParseRetroArchField(g.launch, "core", coreNow, sizeof(coreNow));
+            ImGui::Text("Core:   %s", coreNow);
+            ImGui::Spacing();
+            if (ImGui::Button("Change Icon...")) {
+                s_raIconBrowser.Open();
+            }
+            ImGui::EndGroup();
+        }
+        s_raIconBrowser.Display();
+        if (s_raIconBrowser.HasSelected() && s_raSelectedVi >= 0) {
+            std::string src = s_raIconBrowser.GetSelected().string();
+            s_raIconBrowser.ClearSelected();
+            const char* titleID = g_vgames.games[s_raSelectedVi].titleID;
+            const char* ext = strrchr(src.c_str(), '.');
+            bool isPng = ext && (strcasecmp(ext, ".png") == 0);
+            TM_EnsureDir(VGAMES_ICONS);
+            char dst[600];
+            snprintf(dst, sizeof(dst), "%s/%s.%s",
+                     VGAMES_ICONS, titleID, isPng ? "png" : "jpg");
+            // Clear any sibling extension so the picker is unambiguous.
+            char other[600];
+            snprintf(other, sizeof(other), "%s/%s.%s",
+                     VGAMES_ICONS, titleID, isPng ? "jpg" : "png");
+            remove(other);
+            if (TM_CopyFile(src.c_str(), dst)) {
+                s_raDetailsTexPath[0] = 0; // force reload
+                snprintf(s_statusMsg, sizeof(s_statusMsg), "Icon updated: %s", dst);
+                s_statusTime = 3.0f;
+            }
+        }
+
+        ImGui::EndChild();
+
+        ImGui::Separator();
+
+        // Library list: every VGames entry whose launch URL is a
+        // retroarch:// spec. Per-row delete; columns show the core
+        // and content path parsed out of the launch URL.
+        {
+            int matchIdx[TM_MAX_ENTRIES];
+            int matchCount = 0;
+            for (int i = 0; i < g_vgames.count && matchCount < TM_MAX_ENTRIES; i++) {
+                if (!g_vgames.games[i].valid) continue;
+                if (strncmp(g_vgames.games[i].launch, "retroarch://", 12) != 0) continue;
+                matchIdx[matchCount++] = i;
+            }
+
+            ImGui::Text("RetroArch Library (%d)", matchCount);
+
+            ImGuiTableFlags tflags =
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable;
+            if (ImGui::BeginTable("##ralib", 4, tflags, ImVec2(0, 0))) {
+                ImGui::TableSetupScrollFreeze(0, 1);
+                ImGui::TableSetupColumn("Title",   ImGuiTableColumnFlags_WidthStretch, 0.32f);
+                ImGui::TableSetupColumn("Core",    ImGuiTableColumnFlags_WidthStretch, 0.22f);
+                ImGui::TableSetupColumn("Content", ImGuiTableColumnFlags_WidthStretch, 0.40f);
+                ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,   28.0f);
+                ImGui::TableHeadersRow();
+
+                int pendingDelete = -1;
+                int  changedRowVi  = -1;
+                char changedCore[256] = "";
+                for (int r = 0; r < matchCount; r++) {
+                    int vi = matchIdx[r];
+                    VirtualGame& g = g_vgames.games[vi];
+                    char core[256] = "", content[512] = "";
+                    TM_ParseRetroArchField(g.launch, "core",    core,    sizeof(core));
+                    TM_ParseRetroArchField(g.launch, "content", content, sizeof(content));
+
+                    ImGui::TableNextRow(0, ImGui::GetFrameHeight());
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::PushID(r + 20000);
+                    bool selected = (s_raSelectedVi == vi);
+                    if (ImGui::Selectable(g.name, selected,
+                            ImGuiSelectableFlags_SpanAllColumns |
+                            ImGuiSelectableFlags_AllowItemOverlap)) {
+                        s_raSelectedVi = selected ? -1 : vi;
+                        s_raDetailsTexPath[0] = 0;
+                    }
+                    ImGui::PopID();
+
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::PushID(r);
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    if (s_raCoreCount > 0) {
+                        if (ImGui::BeginCombo("##rowcore", core)) {
+                            for (int i = 0; i < s_raCoreCount; i++) {
+                                bool sel = strcmp(s_raCores[i], core) == 0;
+                                if (ImGui::Selectable(s_raCores[i], sel) &&
+                                    strcmp(s_raCores[i], core) != 0) {
+                                    changedRowVi = vi;
+                                    strncpy(changedCore, s_raCores[i], sizeof(changedCore) - 1);
+                                    changedCore[sizeof(changedCore) - 1] = 0;
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                    } else {
+                        ImGui::TextUnformatted(core);
+                    }
+                    ImGui::PopID();
+
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted(content);
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::PushID(r + 10000);
+                    if (ImGui::SmallButton("X")) pendingDelete = vi;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Remove %s", g.name);
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+
+                if (changedRowVi >= 0) {
+                    VirtualGame& g = g_vgames.games[changedRowVi];
+                    char content[512] = "";
+                    TM_ParseRetroArchField(g.launch, "content", content, sizeof(content));
+                    char encCore[768], encContent[768];
+                    TM_UrlEncode(changedCore, encCore,    sizeof(encCore));
+                    TM_UrlEncode(content,     encContent, sizeof(encContent));
+                    snprintf(g.launch, sizeof(g.launch),
+                             "retroarch://run?core=%s&content=%s", encCore, encContent);
+                    VGames_Save();
+                    UDataSynth_RebuildAll();
+                    s_needsScan = true;
+                    snprintf(s_statusMsg, sizeof(s_statusMsg),
+                             "Core changed: %s -> %s", g.name, changedCore);
+                    s_statusTime = 3.0f;
+                }
+
+                if (pendingDelete >= 0) {
+                    char name[128];
+                    strncpy(name, g_vgames.games[pendingDelete].name, sizeof(name) - 1);
+                    name[sizeof(name) - 1] = 0;
+                    VGames_DeleteByName(name);
+                    VGames_Save();
+                    UDataSynth_RebuildAll();
+                    s_needsScan = true;
+                    snprintf(s_statusMsg, sizeof(s_statusMsg), "Removed: %s", name);
+                    s_statusTime = 3.0f;
+                }
+            }
+        }
 
         ImGui::EndTabItem();
     } // RetroArch tab
