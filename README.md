@@ -18,6 +18,9 @@ The split is intentional. The Xbox build stays faithful to what you'd expect fro
   <img src="docs/images/media-library.png" width="48%" alt="Media library">
   <img src="docs/images/custom-skin.png" width="48%" alt="Custom skin">
 </p>
+<p align="center">
+  <img src="docs/images/retroarch-tab.png" width="80%" alt="RetroArch tab in Title Maker">
+</p>
 
 ## On Xbox
 
