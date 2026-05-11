@@ -18,6 +18,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <dirent.h>
 #endif
 
 extern char s_retroarchPath[512];
@@ -213,7 +215,54 @@ int RetroArch_DiscoverInstall(const char* userOverride,
 	return n;
 }
 
-int RetroArch_EnumerateCores(const char* /*installRoot*/,
-                              char /*outCores*/[][256], int /*maxCores*/) {
-	return 0;
+int RetroArch_EnumerateCores(const char* installRoot,
+                              char outCores[][256], int maxCores) {
+	if (!installRoot || !*installRoot || !outCores || maxCores <= 0) return 0;
+
+#ifdef _WIN32
+	const char* ext = ".dll";
+	char sep = '\\';
+#elif defined(__APPLE__)
+	const char* ext = ".dylib";
+	char sep = '/';
+#else
+	const char* ext = ".so";
+	char sep = '/';
+#endif
+
+	char dir[600];
+	snprintf(dir, sizeof(dir), "%s%ccores", installRoot, sep);
+
+	int n = 0;
+	size_t extLen = strlen(ext);
+
+#ifdef _WIN32
+	char glob[700];
+	snprintf(glob, sizeof(glob), "%s\\*%s", dir, ext);
+	WIN32_FIND_DATAA fd;
+	HANDLE h = FindFirstFileA(glob, &fd);
+	if (h == INVALID_HANDLE_VALUE) return 0;
+	do {
+		if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+		strncpy(outCores[n], fd.cFileName, 255);
+		outCores[n][255] = '\0';
+		if (++n >= maxCores) break;
+	} while (FindNextFileA(h, &fd));
+	FindClose(h);
+#else
+	DIR* d = opendir(dir);
+	if (!d) return 0;
+	struct dirent* ent;
+	while ((ent = readdir(d)) && n < maxCores) {
+		size_t len = strlen(ent->d_name);
+		if (len < extLen) continue;
+		if (strcmp(ent->d_name + len - extLen, ext) != 0) continue;
+		strncpy(outCores[n], ent->d_name, 255);
+		outCores[n][255] = '\0';
+		n++;
+	}
+	closedir(d);
+#endif
+
+	return n;
 }

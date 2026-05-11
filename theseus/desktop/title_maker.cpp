@@ -9,6 +9,7 @@
 #include "udata_synth.h"
 #include "xiso.h"
 #include "launchers/steam.h"
+#include "launchers/retroarch.h"
 #include "imgui.h"
 #include "imfilebrowser.h"
 #include "stb_image.h"
@@ -98,6 +99,43 @@ static bool TM_CopyFile(const char* src, const char* dst) {
     fclose(sfp);
     fclose(dfp);
     return true;
+}
+
+// Derive a title from a content path: strip dir, strip archive-prefix
+// (foo.zip#inner.nes -> inner.nes), strip extension.
+static void TM_DeriveRomTitle(const char* contentPath, char* out, size_t outSize) {
+    if (outSize) out[0] = '\0';
+    if (!contentPath || !*contentPath) return;
+    const char* fwd  = strrchr(contentPath, '/');
+    const char* back = strrchr(contentPath, '\\');
+    const char* fname = (fwd > back) ? fwd : back;
+    fname = fname ? fname + 1 : contentPath;
+    const char* hash = strchr(fname, '#');
+    const char* base = hash ? hash + 1 : fname;
+    strncpy(out, base, outSize - 1);
+    out[outSize - 1] = '\0';
+    char* dot = strrchr(out, '.');
+    if (dot) *dot = '\0';
+}
+
+static void TM_UrlEncode(const char* in, char* out, size_t outSize) {
+    static const char* hex = "0123456789ABCDEF";
+    size_t op = 0;
+    if (outSize == 0) return;
+    for (const char* p = in; *p && op + 4 < outSize; p++) {
+        unsigned char c = (unsigned char)*p;
+        bool safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                 || (c >= '0' && c <= '9') || c == '-' || c == '_'
+                 || c == '.' || c == '~' || c == '/' || c == '\\'
+                 || c == ':';
+        if (safe) out[op++] = (char)c;
+        else {
+            out[op++] = '%';
+            out[op++] = hex[c >> 4];
+            out[op++] = hex[c & 0xF];
+        }
+    }
+    out[op] = '\0';
 }
 
 // Read Icons.ini into parallel key/value arrays. Returns entry count.
@@ -260,6 +298,9 @@ void RenderTitleMaker() {
     ImGui::SameLine(ImGui::GetWindowWidth() - 100);
     ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "F3 to close");
     ImGui::Separator();
+
+    ImGui::BeginTabBar("TMTabs");
+    if (ImGui::BeginTabItem("Games")) {
 
     // xemu path setting
     {
@@ -1084,6 +1125,167 @@ void RenderTitleMaker() {
         s_appBrowser.ClearSelected();
         strncpy(s_editLaunch, appPath.c_str(), sizeof(s_editLaunch) - 1);
     }
+
+    ImGui::EndTabItem();
+    } // Games tab
+
+    if (ImGui::BeginTabItem("RetroArch")) {
+        // Install path setting
+        {
+            ImGui::Text("Install:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 220);
+            ImGui::InputText("##rapath", s_retroarchPath, sizeof(s_retroarchPath));
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Save##ra")) {
+                SaveDesktopSettings();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Find##ra")) {
+                char roots[8][512];
+                int n = RetroArch_DiscoverInstall(s_retroarchPath, roots, 8);
+                if (n > 0) {
+                    strncpy(s_retroarchPath, roots[0], sizeof(s_retroarchPath) - 1);
+                    s_retroarchPath[sizeof(s_retroarchPath) - 1] = 0;
+                } else {
+                    snprintf(s_statusMsg, sizeof(s_statusMsg),
+                             "RetroArch not found in common locations; use Browse");
+                    s_statusTime = 3.0f;
+                }
+            }
+            ImGui::SameLine();
+            static ImGui::FileBrowser s_raPathBrowser(
+                ImGuiFileBrowserFlags_CloseOnEsc | ImGuiFileBrowserFlags_SelectDirectory);
+            static bool s_raPathBrowserInit = false;
+            if (!s_raPathBrowserInit) {
+                s_raPathBrowser.SetTitle("Select RetroArch install folder");
+                s_raPathBrowserInit = true;
+            }
+            if (ImGui::SmallButton("Browse##ra")) {
+                if (s_retroarchPath[0]) s_raPathBrowser.SetPwd(s_retroarchPath);
+                s_raPathBrowser.Open();
+            }
+            s_raPathBrowser.Display();
+            if (s_raPathBrowser.HasSelected()) {
+                std::string sel = s_raPathBrowser.GetSelected().string();
+                strncpy(s_retroarchPath, sel.c_str(), sizeof(s_retroarchPath) - 1);
+                s_retroarchPath[sizeof(s_retroarchPath) - 1] = 0;
+                s_raPathBrowser.ClearSelected();
+            }
+            if (s_retroarchPath[0] == 0)
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f),
+                    "Set RetroArch install path to enumerate cores");
+        }
+        ImGui::Separator();
+
+        // Add-game form state
+        static char s_raTitle[128]      = "";
+        static char s_raContent[512]    = "";
+        static char s_raCores[64][256]  = {};
+        static int  s_raCoreCount       = 0;
+        static int  s_raCoreIdx         = -1;
+        static char s_raLastScannedPath[512] = "";
+        static ImGui::FileBrowser s_raContentBrowser(ImGuiFileBrowserFlags_CloseOnEsc);
+        static bool s_raContentBrowserInit = false;
+        if (!s_raContentBrowserInit) {
+            s_raContentBrowser.SetTitle("Select ROM / content file");
+            s_raContentBrowserInit = true;
+        }
+
+        if (strcmp(s_raLastScannedPath, s_retroarchPath) != 0) {
+            strncpy(s_raLastScannedPath, s_retroarchPath, sizeof(s_raLastScannedPath) - 1);
+            s_raLastScannedPath[sizeof(s_raLastScannedPath) - 1] = 0;
+            s_raCoreCount = s_retroarchPath[0]
+                ? RetroArch_EnumerateCores(s_retroarchPath, s_raCores, 64)
+                : 0;
+            s_raCoreIdx = -1;
+        }
+
+        ImGui::Text("Add Game");
+
+        ImGui::Text("Title:");
+        ImGui::SameLine(80);
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputText("##ratitle", s_raTitle, sizeof(s_raTitle));
+
+        ImGui::Text("Core:");
+        ImGui::SameLine(80);
+        ImGui::SetNextItemWidth(300);
+        const char* coreLabel =
+            (s_raCoreIdx >= 0 && s_raCoreIdx < s_raCoreCount)
+            ? s_raCores[s_raCoreIdx] : "(select core)";
+        if (ImGui::BeginCombo("##racore", coreLabel)) {
+            for (int i = 0; i < s_raCoreCount; i++) {
+                if (ImGui::Selectable(s_raCores[i], s_raCoreIdx == i))
+                    s_raCoreIdx = i;
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Rescan##cores")) {
+            s_raLastScannedPath[0] = 0;
+        }
+        if (s_retroarchPath[0] && s_raCoreCount == 0)
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f),
+                "No cores under %s/cores/. Install one via RetroArch's Online Updater.",
+                s_retroarchPath);
+
+        ImGui::Text("Content:");
+        ImGui::SameLine(80);
+        ImGui::SetNextItemWidth(300);
+        ImGui::InputText("##racontent", s_raContent, sizeof(s_raContent));
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Browse##racontent")) {
+            s_raContentBrowser.Open();
+        }
+        s_raContentBrowser.Display();
+        if (s_raContentBrowser.HasSelected()) {
+            std::string sel = s_raContentBrowser.GetSelected().string();
+            strncpy(s_raContent, sel.c_str(), sizeof(s_raContent) - 1);
+            s_raContent[sizeof(s_raContent) - 1] = 0;
+            s_raContentBrowser.ClearSelected();
+        }
+
+        ImGui::Spacing();
+        bool canAdd = s_raTitle[0] && s_raCoreIdx >= 0 && s_raContent[0];
+        if (!canAdd) ImGui::BeginDisabled();
+        if (ImGui::Button("Add to Library")) {
+            char encCore[768], encContent[768];
+            TM_UrlEncode(s_raCores[s_raCoreIdx], encCore,    sizeof(encCore));
+            TM_UrlEncode(s_raContent,            encContent, sizeof(encContent));
+
+            char launch[2048];
+            snprintf(launch, sizeof(launch),
+                     "retroarch://run?core=%s&content=%s", encCore, encContent);
+
+            char genID[16];
+            snprintf(genID, sizeof(genID), "%08x", (unsigned)time(NULL));
+
+            extern int Title_SanitizeName(const char*, char*, size_t);
+            char cleanName[sizeof(s_raTitle)];
+            Title_SanitizeName(s_raTitle, cleanName, sizeof(cleanName));
+            if (!cleanName[0]) {
+                snprintf(s_statusMsg, sizeof(s_statusMsg),
+                         "Title sanitizes to empty -- pick another");
+                s_statusTime = 4.0f;
+            } else {
+                VGames_Add(cleanName, genID, launch, "E", "Emulators");
+                VGames_Save();
+                UDataSynth_RebuildAll();
+                snprintf(s_statusMsg, sizeof(s_statusMsg),
+                         "Added: %s [%s]", cleanName, s_raCores[s_raCoreIdx]);
+                s_statusTime = 3.0f;
+                s_raTitle[0]   = 0;
+                s_raContent[0] = 0;
+                s_needsScan = true;
+            }
+        }
+        if (!canAdd) ImGui::EndDisabled();
+
+        ImGui::EndTabItem();
+    } // RetroArch tab
+
+    ImGui::EndTabBar();
 
     // Status message
     if (s_statusTime > 0.0f) {
