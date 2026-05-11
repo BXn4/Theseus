@@ -31,7 +31,7 @@ void Playlist_LoadAll() {
             if (s) {
                 Playlist p;
                 const char* nameStart = s + 10;
-                const char* nameEnd   = strchr(nameStart, ']');
+                const char* nameEnd   = strrchr(nameStart, ']');
                 if (nameEnd) p.name.assign(nameStart, nameEnd - nameStart);
                 s_playlists.push_back(p);
                 cur = &s_playlists.back();

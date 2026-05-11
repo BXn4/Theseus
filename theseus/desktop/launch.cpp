@@ -82,14 +82,20 @@ static void ExecLaunch(const char* spec)
 char g_launchLastResult[256] = "";
 
 // Collapse a single outer quote pair so our own quoting doesn't stack.
+// Only when there are exactly 2 quotes (one outer pair, nothing else).
+// Build()-emitted multi-arg commands like `"exe" -L "core" "content"`
+// have more than 2 quotes and must stay intact, otherwise we strip
+// the outer pair around the exe and break the spec.
 static void TrimOuterQuotes(char* s)
 {
 	if (!s) return;
 	size_t len = strlen(s);
-	if (len >= 2 && s[0] == '"' && s[len - 1] == '"') {
-		memmove(s, s + 1, len - 2);
-		s[len - 2] = '\0';
-	}
+	if (len < 2 || s[0] != '"' || s[len - 1] != '"') return;
+	int quoteCount = 0;
+	for (size_t i = 0; i < len; i++) if (s[i] == '"') quoteCount++;
+	if (quoteCount != 2) return;
+	memmove(s, s + 1, len - 2);
+	s[len - 2] = '\0';
 }
 
 static bool IsExistingFile(const char* path)
@@ -180,7 +186,25 @@ static bool Launch_DoSpawn(const char* expanded)
 		si.cb = sizeof(si);
 		PROCESS_INFORMATION pi = {};
 		char cmd[2048];
-		snprintf(cmd, sizeof(cmd), "cmd /C \"%s\"", spec);
+		// Quoted .exe spec skips cmd entirely. CreateProcessA with
+		// lpApplicationName=NULL parses the first quoted token as the
+		// exe with no shell quote-mangling. cmd's strip-first-and-last
+		// rule eats our outer wrapper otherwise. .bat / .cmd / etc.
+		// stay on the cmd path because they need a shell to interpret.
+		bool directExe = false;
+		if (spec[0] == '"') {
+			const char* exeEnd = strchr(spec + 1, '"');
+			if (exeEnd && exeEnd - spec >= 5 &&
+			    strncasecmp(exeEnd - 4, ".exe", 4) == 0) {
+				directExe = true;
+			}
+		}
+		if (directExe) {
+			strncpy(cmd, spec, sizeof(cmd) - 1);
+			cmd[sizeof(cmd) - 1] = 0;
+		} else {
+			snprintf(cmd, sizeof(cmd), "cmd /C \"%s\"", spec);
+		}
 		if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
 		                    DETACHED_PROCESS, NULL,
 		                    haveWorkdir ? workdir : NULL,

@@ -19,7 +19,8 @@ The split is intentional. The Xbox build stays faithful to what you'd expect fro
   <img src="docs/images/custom-skin.png" width="48%" alt="Custom skin">
 </p>
 <p align="center">
-  <img src="docs/images/retroarch-tab.png" width="80%" alt="RetroArch tab in Title Maker">
+  <img src="docs/images/steam-tab.png" width="48%" alt="Steam tab in Title Maker">
+  <img src="docs/images/retroarch-tab.png" width="48%" alt="RetroArch tab in Title Maker">
 </p>
 
 ## On Xbox
@@ -36,22 +37,22 @@ What works:
 - Quick overlay (LT + B) for ISO loader, file manager, FTP / drive widgets
 - FTP server, recovery / panic screen, MP3 soundtrack playback
 
-[Download for Xbox →](https://github.com/MrMilenko/Theseus/releases) (or build from source, see below)
+[Download for Xbox ->](https://github.com/MrMilenko/Theseus/releases) (or build from source, see below)
 
 ## On the desktop (UIX Desktop)
 
 UIX Desktop is the Theseus engine compiled for your computer, with the modern features bolted on. macOS, Linux, Windows, Steam Deck friendly.
 
-- **3D launcher** for PC games, Steam libraries, and Xbox ISOs (via [xemu](https://xemu.app))
-- **Media library**: movies, TV shows, custom playlists, [TMDB](https://www.themoviedb.org/) metadata enrichment, libmpv-backed video playback
-- **Skin authoring** with live XAP script editing, scene inspector, hot reload
-- **Title Maker** for wiring up shortcuts with custom icons and launch commands
-- **Xbox HDD browser** for qcow2 / FATX images
-- **CRT post-process**: scanlines, curvature, phosphor, bloom
-- **Configurable graphics**: vsync mode, FPS cap, MSAA, hardware video decode, all in Settings → Display
-- **Controller support**: Xbox and PlayStation pads via SDL2
+- **3D launcher** for native PC games, Steam libraries, RetroArch ROMs, and Xbox ISOs via [xemu](https://xemu.app)
+- **Media library** that scans your Movies and TV folders, pulls posters from [TMDB](https://www.themoviedb.org/), plays back through libmpv
+- **Skin editor** with live XAP scripting and a scene inspector. Change a skin, see it instantly
+- **Title Maker** for adding games and apps, with per launcher import flows for Steam and RetroArch
+- **Xbox HDD browser** that opens qcow2 and FATX images
+- **CRT post process** for the old TV look. Scanlines, curvature, phosphor, bloom, all tunable
+- **Graphics knobs** in Settings -> Display: vsync mode, FPS cap, MSAA, hardware video decode
+- **Controllers**: Xbox and PlayStation pads via SDL2
 
-[Download for desktop →](https://github.com/MrMilenko/Theseus/releases)
+[Download for desktop ->](https://github.com/MrMilenko/Theseus/releases)
 
 ## Quick Start
 
@@ -83,6 +84,18 @@ sudo apt install libsdl2-2.0-0 libsdl2-mixer-2.0-0 libmpv2 libcurl4
 (Some distros ship `libmpv1` instead of `libmpv2`. Either works.)
 
 If you'd rather build from source, jump down to [Building](#building).
+
+## Adding games
+
+Title Maker (F3 from the dashboard) is where you connect games to dashboard tiles. Three tabs:
+
+**Main** is the catch all. Every title you've added shows up here, regardless of which tab created it. This is also where you add the weird stuff that doesn't belong to a launcher: a Windows .exe, a .bat script, a macOS .command file, a shell one liner, anything that takes a path or command. Edit names, swap icons, tweak the launch line. Most of your time managing the library happens here.
+
+**Steam** auto detects your Steam install (Find button), or you point at it once. Hit Import Steam Library and your installed games come in with icons fetched from Valve's CDN. There's also a manual "Add by App ID" form for launching betas, demos, or games not in your normal library scan.
+
+**RetroArch** detects your RetroArch install the same way. Import Recent Titles pulls in everything you've recently played in RetroArch, with the right core auto resolved and boxart copied from RetroArch's thumbnail packs. You can also add manually: pick a ROM, pick a core from the dropdown, done.
+
+If you don't use Steam or RetroArch, you can turn either tab off under Optional Tabs (top of Main). Anything you've already added stays in Main either way.
 
 ## Customization
 
