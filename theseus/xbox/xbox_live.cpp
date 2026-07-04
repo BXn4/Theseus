@@ -7,10 +7,10 @@
 #include "theseus.h"
 #include "node.h"
 #include "runner.h"
-#include <ntos.h>
+#include "xbox_private_types.h"
+#include <xonlinep.h>
 #include "xcrypt.h"
 #include <stddef.h>
-#include <xonlinep.h>
 
 static BYTE g_XboxHDKey[16] = {0};
 
@@ -212,7 +212,7 @@ bool CXboxLive::LoadFromRawDrive()
 {
     OutputDebugString(_T("[XboxLive] Trying XOnlineGetUsersFromHD...\n"));
 
-    XONLINE_USER users[XONLINE_MAX_STORED_ONLINE_USERS] = {0};
+    XONLINE_USER_HD users[XONLINE_MAX_STORED_ONLINE_USERS] = {0};
     DWORD userCount = 0;
 
     HRESULT xr = XOnlineStartup(NULL);
@@ -232,7 +232,7 @@ bool CXboxLive::LoadFromRawDrive()
     }
 
     // Use first user (you can enhance this to allow multi-user selection)
-    const XONLINE_USER& user = users[0];
+    const XONLINE_USER_HD& user = users[0];
 
     ZeroMemory(&m_account, sizeof(m_account));
     m_account.XUID = user.xuid.qwUserID;

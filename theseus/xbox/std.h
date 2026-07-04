@@ -30,30 +30,10 @@
 #include <malloc.h>
 #endif
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-#include <ntos.h>
-#include <ntrtl.h>
-#include <nturtl.h>
-#include <ntdddisk.h>
-#include <ntddcdrm.h>
-#include <ntddscsi.h>
-#include <ntddcdvd.h>
-#include "smcdef.h"
-#include <scsi.h>
 #include <init.h>
 #include <xtl.h>
 #include <xgraphics.h>
-#include <xboxp.h>
-#include <xboxverp.h>
-#include "xapip.h"
-#include <av.h>
-#include <dm.h>
-#include <smcdef.h>
-#ifdef __cplusplus
-}
-#endif
+#include "xbox_private_types.h"
 
 #ifndef D3DLOCK_DISCARD
 #define D3DLOCK_DISCARD 0
@@ -191,7 +171,6 @@ EXTERN_C void Alert(const TCHAR* szMsg, ...);
 // =========================================================================
 
 #ifdef _XBOX
-#include "xprofp.h"
 
 #ifdef _PROFILE
 #define START_PROFILE() XProfpControl(XPROF_START, 0)

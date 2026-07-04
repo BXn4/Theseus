@@ -9,7 +9,6 @@
 #include "runner.h"
 
 #include "xlaunch.h"
-#include "cryptkeys.h"
 #include "av.h"
 #include "timezone.h"
 #include "locale_node.h"
@@ -732,15 +731,8 @@ int CConfig::FileExists(const TCHAR* FileName) { return NtFileExists(FileName); 
 
 CStrObject *CConfig::GetRecoveryKey()
 {
-	CHAR RecoveryKey[RECOVERY_KEY_LEN];
-	ComputeRecoveryKey((LPBYTE)XboxHDKey, RecoveryKey);
-#ifdef _UNICODE
-	TCHAR RecKey[RECOVERY_KEY_LEN];
-	Unicode(RecKey, RecoveryKey, RECOVERY_KEY_LEN);
-	return new CStrObject(RecKey);
-#else
-	return new CStrObject(RecoveryKey);
-#endif
+	// Parental-lock recovery codes aren't meaningful on modified hardware.
+	return new CStrObject(_T(""));
 }
 
 CStrObject *CConfig::GetROMVersion()

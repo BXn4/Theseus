@@ -52,14 +52,13 @@ build/Makefile.thinkpad
 *.bak
 MediaDB.cache
 
-# xiptool extract scratch dirs. Source-of-truth for xap files lives in
-# xips-source/; Data/Xips/<name>/ only exists as a pack staging area
-# (xiptool names .xip after its input folder) or as leftover from
-# `xiptool extract`. Tracked .xip artifacts (Data/Xips/*.xip) still
-# commit normally — only the unpacked subdirectories are ignored.
+# xiptool extract scratch dirs. The xap source of truth lives in xips-source/.
+# Data/Xips/<name>/ is just a pack staging area or leftover from an extract.
+# The packed Data/Xips/*.xip files still commit; only the unpacked folders
+# are ignored.
 Data/Xips/*/
 
-# bgfx build artifacts (Phase 2 of D3D audit). Submodule sources live
-# at theseus/third-party/{bx,bimg,bgfx}/; their .build/ output is
-# machine-specific and rebuilds via `make osx-arm64-release` etc.
+# bgfx build artifacts. Submodule sources live at
+# theseus/third-party/{bx,bimg,bgfx}/; the .build/ output is machine specific
+# and rebuilds locally.
 theseus/third-party/bgfx/.build/

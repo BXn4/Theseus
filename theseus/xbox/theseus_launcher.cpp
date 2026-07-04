@@ -55,17 +55,61 @@ bool CTheseusLauncher::LaunchXBE(const char *szPath)
     return XLaunchNewImage(szPath, NULL) == S_OK;
 }
 
+// Cerbios wants a raw NT device path for the slice file. A drive letter like
+// "F:\" won't resolve inside the virtual driver, so map it to a device path
+// with the same drive table the overlay uses.
+static bool DosToNtPath(const char *dosPath, char *ntPath, int ntPathSize)
+{
+    if (!dosPath || strlen(dosPath) < 3 || dosPath[1] != ':' || dosPath[2] != '\\')
+        return false;
+
+    struct { char letter; const char *ntDev; } driveMap[] = {
+        {'C', "\\Device\\Harddisk0\\partition2"},
+        {'E', "\\Device\\Harddisk0\\partition1"},
+        {'F', "\\Device\\Harddisk0\\partition6"},
+        {'G', "\\Device\\Harddisk0\\partition7"},
+        {'R', "\\Device\\Harddisk0\\partition8"},
+        {'S', "\\Device\\Harddisk0\\partition9"},
+        {'X', "\\Device\\Harddisk0\\partition5"},
+        {'Y', "\\Device\\Harddisk0\\partition4"},
+        {'Z', "\\Device\\Harddisk0\\partition3"},
+    };
+
+    char letter = dosPath[0];
+    if (letter >= 'a' && letter <= 'z')
+        letter -= 32;
+
+    const char *ntDev = NULL;
+    for (int i = 0; i < (int)(sizeof(driveMap) / sizeof(driveMap[0])); ++i)
+        if (driveMap[i].letter == letter) { ntDev = driveMap[i].ntDev; break; }
+
+    if (!ntDev)
+        return false;
+
+    const char *remainder = dosPath + 3;
+    if (*remainder)
+        _snprintf(ntPath, ntPathSize, "%s\\%s", ntDev, remainder);
+    else
+        _snprintf(ntPath, ntPathSize, "%s", ntDev);
+    return true;
+}
+
 bool CTheseusLauncher::LaunchWithAttach(const char *szISOPath)
 {
     const bool isCCI = EndsWith(szISOPath, ".cci");
     const USHORT build = XboxKrnlVersion->Build;
 
+    // Turn a drive letter path into a device path. If it already is one, keep it.
+    char ntPath[MAX_PATH];
     const char *path = szISOPath;
-    const char *file = strrchr(szISOPath, '\\');
+    if (DosToNtPath(szISOPath, ntPath, sizeof(ntPath)))
+        path = ntPath;
+
+    const char *file = strrchr(path, '\\');
     if (file)
         file++;
     else
-        file = szISOPath;
+        file = path;
 
     if (build >= 8008)
     {
@@ -134,12 +178,11 @@ bool CTheseusLauncher::AttachCerbios(const char *path, const char *file, bool is
 
     if (success)
     {
-        // Soft-launch into the freshly mounted virtual disc, matching the
-        // overlay file manager's pattern. A hard HalReturnToFirmware works
-        // for plain ISOs (BIOS re-detects on boot) but tears down Cerbios's
-        // CCI decompression state mid-mount, producing a "dirty disc" error.
-        OutputDebugString(L"TheseusLauncher: Cerbios attach OK, launching D:\\default.xbe\n");
-        XLaunchNewImage("D:\\default.xbe", NULL);
+        // Hard quick reboot into the freshly mounted disc, matching Hermes.
+        // Cerbios keeps the CCI decompression state alive across the reboot,
+        // so the BIOS detects and boots it.
+        OutputDebugString(L"TheseusLauncher: Cerbios attach OK, rebooting to mounted disc\n");
+        HalReturnToFirmware(HalQuickRebootRoutine);
     }
 
     return false;
@@ -193,9 +236,9 @@ bool CTheseusLauncher::AttachLegacy(const char *path, const char *file, USHORT b
     }
     else if (success)
     {
-        // Soft-launch into the mounted virtual disc instead of cold-resetting --
-        // matches the overlay's working flow. HalReturnToFirmware preserved
-        // ISO mounts on this build but tore down CCI mid-mount.
+        // Soft launch into the mounted virtual disc, matching the overlay's
+        // working flow. On this build a hard reboot drops the CCI mount, so
+        // we hand off with XLaunchNewImage to keep it intact.
         OutputDebugString(L"TheseusLauncher: Legacy attach OK, launching D:\\default.xbe\n");
         XLaunchNewImage("D:\\default.xbe", NULL);
     }

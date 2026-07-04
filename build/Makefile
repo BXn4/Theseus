@@ -84,7 +84,7 @@
 THESEUS_SRC  = ../theseus
 
 # Xbox Development Kit source tree (private + public headers/libs)
-XDK_BASE    ?= $(error XDK_BASE not set. Point it at your Xbox SDK tree, e.g. XDK_BASE=/Volumes/MyDrive/xbox)
+XDK_BASE    ?= ../theseus/xdk
 
 # OXDK toolkit (provides cxbe and xdk_compat.h)
 OXDK_DIR    ?= $(HOME)/OXDK
@@ -196,14 +196,7 @@ CFLAGS = \
 	-iquote $(THESEUS_SRC)/shared \
 	-iquote $(THESEUS_SRC)/render \
 	-I$(THESEUS_SRC)/xdk/include \
-	-I$(XDK_PUB_INC) \
-	-I$(XDK_PRV_INC) \
-	-I$(NTOS_INC) \
-	-I$(NTOS_XAPI) \
-	-I$(SDK_INC) \
-	-I$(SDK_INC)/crt \
-	-I$(DDK_INC) \
-	-I$(XDK_PRV_INC)/crypto
+	-I$(THESEUS_SRC)/xbox/compat
 
 # stdcall is the default calling convention for Xbox (MSVC /Gz).
 # Only set for C++. C functions use explicit WINAPI/WSAAPI attributes.
@@ -222,7 +215,6 @@ LDFLAGS = \
 	/safeseh:no \
 	/merge:.edata=.edataxb \
 	/libpath:$(XDK_PUB_LIB) \
-	/libpath:$(XDK_PRV_LIB) \
 	/errorlimit:0 \
 	/map:$(OUTPUT_DIR)/theseus.map \
 	/alternatename:__imp__HalReturnToFirmware=__imp__HalReturnToFirmware@4 \
@@ -401,7 +393,7 @@ $(TARGET_EXE): $(OBJS) $(THESEUSLIB_LIB)
 # Only needs CRT headers (stdlib.h, string.h, math.h).
 $(OUTPUT_DIR)/engine/minimp3_decode.obj: $(THESEUS_SRC)/engine/minimp3_decode.cpp | $(OUTPUT_DIR)/engine
 	$(CXX) $(TARGET_FLAGS) -c -MMD -MP $(OPT_FLAGS) -fno-rtti \
-		-I$(THESEUS_SRC)/engine -I$(SDK_INC)/crt -I$(SDK_INC) \
+		-I$(THESEUS_SRC)/engine -I$(THESEUS_SRC)/xdk/include \
 		-Wno-typedef-redefinition \
 		-o $@ $<
 
