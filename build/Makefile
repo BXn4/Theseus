@@ -448,6 +448,8 @@ ifeq ($(UNAME_S),Darwin)
   DESKTOP_CC   ?= clang
   SDL2_CFLAGS  := $(shell sdl2-config --cflags 2>/dev/null || echo -I/opt/homebrew/include/SDL2 -I/usr/local/include/SDL2)
   SDL2_LDFLAGS := $(shell sdl2-config --libs 2>/dev/null || echo -L/opt/homebrew/lib -lSDL2)
+  # OpenGL is for projectM (the milkdrop visualizer), not a dashboard
+  # render backend; the dashboard renders through bgfx (Metal here).
   DESKTOP_PLATFORM_LDFLAGS = -framework OpenGL -lSDL2_mixer
 else ifeq ($(UNAME_S),Linux)
   # Default to system g++. Debian/Ubuntu ship gcc by default; users with
@@ -456,15 +458,15 @@ else ifeq ($(UNAME_S),Linux)
   DESKTOP_CC   ?= gcc
   SDL2_CFLAGS  := $(shell sdl2-config --cflags)
   SDL2_LDFLAGS := $(shell sdl2-config --libs)
+  # OpenGL is for projectM, not a dashboard render backend.
   DESKTOP_PLATFORM_LDFLAGS = -lGL -lSDL2_mixer
 else
-  # Windows (MSYS2/MinGW). d3d8_sdl.h pulls <GL/glew.h> on _WIN32, so we
-  # need -lglew32 at link time. -DGLEW_STATIC isn't set here because the
-  # mingw-w64-x86_64-glew package ships a DLL, not a static lib.
+  # Windows (MSYS2/MinGW). Native Windows desktop builds are unsupported;
+  # use the desktop-win64 cross target for Windows.
   #
+  # opengl32/glew32: projectM (the milkdrop visualizer).
   # ws2_32: config.cpp's hostname / gethostbyname (network discovery).
   # dbghelp: sdl_main.cpp's StackWalk64-based panic crash handler.
-  # Same set as the Win64 cross link line.
   DESKTOP_CXX  ?= g++
   DESKTOP_CC   ?= gcc
   SDL2_CFLAGS  := $(shell sdl2-config --cflags)
@@ -573,6 +575,46 @@ DESKTOP_CFLAGS = \
 
 DESKTOP_LDFLAGS = $(SDL2_LDFLAGS) $(DESKTOP_PLATFORM_LDFLAGS) $(MPV_LDFLAGS) $(CDAUDIO_LDFLAGS) $(CURL_LDFLAGS) $(PROJECTM_LDFLAGS) -lm
 
+# xCloud video/audio decode uses libavcodec/libswscale + opus directly
+# (headers already come in via mpv's pkg-config cflags). ffmpeg is a hard
+# dep of the desktop anyway.
+ifeq ($(UNAME_S),Darwin)
+  DESKTOP_LDFLAGS += -L$(shell brew --prefix ffmpeg)/lib -lavcodec -lavutil -lswscale
+  DESKTOP_CFLAGS  += -I$(shell brew --prefix opus)/include
+  DESKTOP_LDFLAGS += -L$(shell brew --prefix opus)/lib -lopus
+else
+  DESKTOP_CFLAGS  += $(shell pkg-config --cflags opus)
+  DESKTOP_LDFLAGS += $(shell pkg-config --libs libavcodec libavutil libswscale opus)
+endif
+
+# Xbox remote play / xCloud streaming uses libdatachannel for the WebRTC
+# transport (ICE + DTLS + SCTP datachannels + RTP media). Static libs come
+# from a one time build under third-party/libdatachannel:
+#   cmake -S . -B build-mac -DBUILD_SHARED_LIBS=OFF -DNO_WEBSOCKET=1 \
+#     -DNO_EXAMPLES=1 -DNO_TESTS=1 -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)
+#   cmake --build build-mac -j
+# The block is skipped (no THESEUS_HAVE_WEBRTC) if the lib is not built yet.
+LDC_ROOT := $(THESEUS_SRC)/third-party/libdatachannel
+ifeq ($(UNAME_S),Darwin)
+  LDC_BUILD := $(LDC_ROOT)/build-mac
+else ifeq ($(UNAME_S),Linux)
+  LDC_BUILD := $(LDC_ROOT)/build-linux
+endif
+# Present once the one-time libdatachannel build has run for this host;
+# otherwise xCloud stays compiled out (THESEUS_HAVE_WEBRTC undefined).
+ifneq ($(wildcard $(LDC_BUILD)/libdatachannel.a),)
+  DESKTOP_CFLAGS  += -DTHESEUS_HAVE_WEBRTC=1 -I$(LDC_ROOT)/include
+  DESKTOP_LDFLAGS += $(LDC_BUILD)/libdatachannel.a \
+                     $(LDC_BUILD)/deps/libjuice/libjuice.a \
+                     $(LDC_BUILD)/deps/libsrtp/libsrtp2.a \
+                     $(LDC_BUILD)/deps/usrsctp/usrsctplib/libusrsctp.a
+  ifeq ($(UNAME_S),Darwin)
+    DESKTOP_LDFLAGS += -L$(shell brew --prefix openssl@3)/lib -lssl -lcrypto
+  else
+    DESKTOP_LDFLAGS += -lssl -lcrypto
+  endif
+endif
+
 # Toggle: build the desktop with AddressSanitizer to catch UB / UAF
 # at runtime. Use: `make desktop ASAN=1`.
 ifdef ASAN
@@ -580,38 +622,34 @@ ifdef ASAN
   DESKTOP_LDFLAGS += -fsanitize=address
 endif
 
-# Toggle: build the desktop with the bgfx backend instead of the
-# OpenGL backend of d3d8_sdl.h. See project_bgfx_swap.md for context.
-# `make desktop BGFX=1`. Submodules live at theseus/third-party/{bx,bimg,bgfx}.
-# Build them first with `make -C theseus/third-party/bgfx osx-arm64-release`
-# (or the right target for your platform) to get libbgfxRelease.a etc.
-ifdef BGFX
-  BGFX_ROOT       := $(THESEUS_SRC)/third-party/bgfx
-  BX_ROOT         := $(THESEUS_SRC)/third-party/bx
-  BIMG_ROOT       := $(THESEUS_SRC)/third-party/bimg
-  DESKTOP_CFLAGS  += -DTHESEUS_USE_BGFX=1 \
-                     -I$(BGFX_ROOT)/include -I$(BX_ROOT)/include -I$(BIMG_ROOT)/include
-  ifeq ($(UNAME_S),Darwin)
-    BGFX_BUILD_DIR  := $(BGFX_ROOT)/.build/osx-arm64/bin
-    DESKTOP_CFLAGS  += -I$(BX_ROOT)/include/compat/osx
-    DESKTOP_LDFLAGS += $(BGFX_BUILD_DIR)/libbgfxRelease.a \
-                       $(BGFX_BUILD_DIR)/libbxRelease.a \
-                       $(BGFX_BUILD_DIR)/libbimgRelease.a \
-                       -framework Cocoa -framework Metal -framework MetalKit \
-                       -framework QuartzCore -framework IOKit -framework CoreFoundation
-  else ifeq ($(UNAME_S),Linux)
-    # Build libs locally via:
-    #   make -C theseus/third-party/bgfx linux-gcc-release64
-    # bgfx on Linux uses Vulkan by default (sdl_main.cpp's auto-pick
-    # lands there since Vulkan caps trump GL). Runtime needs vulkan-loader
-    # + X11 system libs; -ldl/-lpthread are dl/thread for bgfx's RTLD use.
-    BGFX_BUILD_DIR  := $(BGFX_ROOT)/.build/linux64_gcc/bin
-    DESKTOP_CFLAGS  += -I$(BX_ROOT)/include/compat/linux
-    DESKTOP_LDFLAGS += $(BGFX_BUILD_DIR)/libbgfxRelease.a \
-                       $(BGFX_BUILD_DIR)/libbxRelease.a \
-                       $(BGFX_BUILD_DIR)/libbimgRelease.a \
-                       -lvulkan -lX11 -ldl -lpthread
-  endif
+# bgfx is the desktop rendering backend. Submodules live at
+# theseus/third-party/{bx,bimg,bgfx}; build them first with
+# `make -C theseus/third-party/bgfx osx-arm64-release` (or the right
+# target for your platform) to get libbgfxRelease.a etc.
+BGFX_ROOT       := $(THESEUS_SRC)/third-party/bgfx
+BX_ROOT         := $(THESEUS_SRC)/third-party/bx
+BIMG_ROOT       := $(THESEUS_SRC)/third-party/bimg
+DESKTOP_CFLAGS  += -DTHESEUS_USE_BGFX=1 \
+                   -I$(BGFX_ROOT)/include -I$(BX_ROOT)/include -I$(BIMG_ROOT)/include
+ifeq ($(UNAME_S),Darwin)
+  BGFX_BUILD_DIR  := $(BGFX_ROOT)/.build/osx-arm64/bin
+  DESKTOP_CFLAGS  += -I$(BX_ROOT)/include/compat/osx
+  DESKTOP_LDFLAGS += $(BGFX_BUILD_DIR)/libbgfxRelease.a \
+                     $(BGFX_BUILD_DIR)/libbxRelease.a \
+                     $(BGFX_BUILD_DIR)/libbimgRelease.a \
+                     -framework Cocoa -framework Metal -framework MetalKit \
+                     -framework QuartzCore -framework IOKit -framework CoreFoundation
+else ifeq ($(UNAME_S),Linux)
+  # Build libs locally via:
+  #   make -C theseus/third-party/bgfx linux-gcc-release64
+  # bgfx on Linux uses Vulkan by default. Runtime needs vulkan-loader
+  # + X11 system libs; -ldl/-lpthread are for bgfx's RTLD use.
+  BGFX_BUILD_DIR  := $(BGFX_ROOT)/.build/linux64_gcc/bin
+  DESKTOP_CFLAGS  += -I$(BX_ROOT)/include/compat/linux
+  DESKTOP_LDFLAGS += $(BGFX_BUILD_DIR)/libbgfxRelease.a \
+                     $(BGFX_BUILD_DIR)/libbxRelease.a \
+                     $(BGFX_BUILD_DIR)/libbimgRelease.a \
+                     -lvulkan -lX11 -ldl -lpthread
 endif
 
 # Desktop sources: ALL from theseus/desktop/ (UIX Desktop tree imported in full).
@@ -673,9 +711,6 @@ DESKTOP_SRCS_PLATFORM = \
 	$(THESEUS_SRC)/desktop/launch.cpp \
 	$(THESEUS_SRC)/desktop/path_template.cpp \
 	$(THESEUS_SRC)/desktop/launchers/registry.cpp \
-	$(THESEUS_SRC)/desktop/launchers/shell.cpp \
-	$(THESEUS_SRC)/desktop/launchers/url.cpp \
-	$(THESEUS_SRC)/desktop/launchers/xemu.cpp \
 	$(THESEUS_SRC)/desktop/launchers/steam.cpp \
 	$(THESEUS_SRC)/desktop/launchers/retroarch.cpp \
 	$(THESEUS_SRC)/desktop/title_sanitize.cpp \
@@ -684,6 +719,7 @@ DESKTOP_SRCS_PLATFORM = \
 	$(THESEUS_SRC)/xbox/network.cpp \
 	$(THESEUS_SRC)/desktop/desktop_stubs.cpp \
 	$(THESEUS_SRC)/desktop/desktop_nodes.cpp \
+	$(THESEUS_SRC)/desktop/media_db.cpp \
 	$(THESEUS_SRC)/desktop/audio_sdl.cpp \
 	$(THESEUS_SRC)/desktop/cdaudio.cpp \
 	$(THESEUS_SRC)/desktop/inspector.cpp \
@@ -705,22 +741,21 @@ DESKTOP_SRCS_PLATFORM = \
 	$(THESEUS_SRC)/desktop/http_util.cpp \
 	$(THESEUS_SRC)/desktop/plex_client.cpp \
 	$(THESEUS_SRC)/desktop/jellyfin_client.cpp \
+	$(THESEUS_SRC)/desktop/xcloud_client.cpp \
+	$(THESEUS_SRC)/desktop/xcloud_node.cpp \
+	$(THESEUS_SRC)/desktop/xcloud_vgames.cpp \
+	$(THESEUS_SRC)/desktop/xcloud_video.cpp \
+	$(THESEUS_SRC)/desktop/xcloud_audio.cpp \
 	$(THESEUS_SRC)/desktop/xiso.cpp
 
-# ImGui sources. imgui_impl_opengl3 is the GL renderer backend used by
-# the default build; imgui_impl_bgfx (chunk 5d-3) is its bgfx
-# counterpart, swapped in when THESEUS_USE_BGFX is set.
+# ImGui sources. imgui_impl_bgfx is the renderer backend.
 DESKTOP_SRCS_IMGUI = \
 	$(THESEUS_SRC)/desktop/imgui/imgui.cpp \
 	$(THESEUS_SRC)/desktop/imgui/imgui_draw.cpp \
 	$(THESEUS_SRC)/desktop/imgui/imgui_tables.cpp \
 	$(THESEUS_SRC)/desktop/imgui/imgui_widgets.cpp \
-	$(THESEUS_SRC)/desktop/imgui/imgui_impl_sdl2.cpp
-ifdef BGFX
-  DESKTOP_SRCS_IMGUI += $(THESEUS_SRC)/desktop/imgui_impl_bgfx.cpp
-else
-  DESKTOP_SRCS_IMGUI += $(THESEUS_SRC)/desktop/imgui/imgui_impl_opengl3.cpp
-endif
+	$(THESEUS_SRC)/desktop/imgui/imgui_impl_sdl2.cpp \
+	$(THESEUS_SRC)/desktop/imgui_impl_bgfx.cpp
 
 DESKTOP_ALL_SRCS = \
 	$(DESKTOP_SRCS_ENGINE) \
@@ -918,14 +953,22 @@ $(DESKTOP_TARGET): $(DESKTOP_OBJS)
 	@# binary CWDs into its own directory and resolves Xbox C:/Q:/E:
 	@# paths through them. Prefer rsync for fast incrementals; fall back
 	@# to cp -R on barebones systems (some Debian installs ship without rsync).
-	@for D in Configs Data Library; do \
+	@# desktop.ini carries the user's runtime settings (library paths,
+	@# xCloud auth token). Stash it before the mirror so a rebuild never
+	@# resets it; a fresh build with no existing copy still seeds from source.
+	@SAVED=""; \
+	 if [ -f $(DESKTOP_DIR)/Configs/desktop.ini ]; then \
+		SAVED=$$(mktemp); cp $(DESKTOP_DIR)/Configs/desktop.ini $$SAVED; \
+	 fi; \
+	 for D in Configs Data Library; do \
 		if command -v rsync >/dev/null 2>&1; then \
 			rsync -a --delete $(THESEUS_SRC)/../$$D/ $(DESKTOP_DIR)/$$D/; \
 		else \
 			rm -rf $(DESKTOP_DIR)/$$D && mkdir -p $(DESKTOP_DIR)/$$D && \
 			cp -R $(THESEUS_SRC)/../$$D/. $(DESKTOP_DIR)/$$D/; \
 		fi; \
-	done
+	 done; \
+	 if [ -n "$$SAVED" ]; then cp $$SAVED $(DESKTOP_DIR)/Configs/desktop.ini; rm -f $$SAVED; fi
 	@# Stamp Configs/version. Canon version lives in the source-tree
 	@# Configs/version (`version=X.Y.YYMMDD`) and is hand-bumped on
 	@# release. The build appends `-YYMMDD-<short-sha>` so artifact
@@ -1035,12 +1078,10 @@ WIN64_CFLAGS = \
 	-D_WINDOWS=1 \
 	-D_THESEUS_STD_H=1 \
 	-DSDL_MAIN_HANDLED \
-	$(if $(BGFX),,-DGLEW_STATIC) \
 	-DUIX_CDAUDIO=1 \
 	-fpermissive \
 	-I$(SDL2_MINGW_INC)/SDL2 \
 	-I$(MIXER_MINGW_INC)/SDL2 \
-	$(if $(BGFX),,-I$(GLEW_MINGW_INC)) \
 	-I$(MPV_MINGW_INC) \
 	-I$(CURL_MINGW_INC) \
 	-I$(THESEUS_SRC)/desktop \
@@ -1071,21 +1112,19 @@ WIN64_CFLAGS = \
 WIN64_LDFLAGS = \
 	-L$(SDL2_MINGW_LIB) \
 	-L$(MIXER_MINGW_LIB) \
-	$(if $(BGFX),,-L$(GLEW_MINGW_LIB)) \
 	-L$(MPV_MINGW_LIB) \
 	-L$(CURL_MINGW_LIB) \
 	-static-libgcc -static-libstdc++ \
 	-Wl,--subsystem,windows -Wl,-emainCRTStartup \
 	-Wl,--export-all-symbols \
 	-lmingw32 -lSDL2main -lSDL2 -lSDL2_mixer \
-	$(if $(BGFX),,-lglew32) \
 	-lmpv -lcurl \
 	$(PROJECTM_WIN64_LDFLAGS) \
 	-lopengl32 -lgdi32 -limm32 -lole32 -loleaut32 -lsetupapi -lversion -lwinmm -luuid \
 	-lws2_32 -ldbghelp -lavrt -ldwmapi -lcomdlg32
 
-# BGFX=1 on Windows: link Vulkan via bgfx, drop the OpenGL backend.
-# bgfx libs were built from the macOS host with:
+# Windows links Vulkan via bgfx. bgfx libs were built from the macOS
+# host with:
 #   cd theseus/third-party/bgfx
 #   MINGW=/opt/homebrew/Cellar/mingw-w64/14.0.0/toolchain-x86_64 \
 #   make -C .build/projects/gmake-mingw-gcc bx bimg bgfx \
@@ -1095,29 +1134,21 @@ WIN64_LDFLAGS = \
 # pins bgfx::RendererType::Vulkan on Windows in sdl_main.cpp.
 # Windows system libs bgfx pulls in: gdi32 + psapi (renderer_d3d*
 # stubs even though we use Vulkan).
-ifdef BGFX
-  BGFX_WIN64_BUILD_DIR := $(THESEUS_SRC)/third-party/bgfx/.build/win64_mingw-gcc/bin
-  WIN64_CFLAGS  += -DTHESEUS_USE_BGFX=1 \
-                   -I$(THESEUS_SRC)/third-party/bgfx/include \
-                   -I$(THESEUS_SRC)/third-party/bx/include \
-                   -I$(THESEUS_SRC)/third-party/bimg/include \
-                   -I$(THESEUS_SRC)/third-party/bx/include/compat/mingw
-  WIN64_LDFLAGS += $(BGFX_WIN64_BUILD_DIR)/libbgfxRelease.a \
-                   $(BGFX_WIN64_BUILD_DIR)/libbxRelease.a \
-                   $(BGFX_WIN64_BUILD_DIR)/libbimgRelease.a \
-                   -lgdi32 -lpsapi
-endif
+BGFX_WIN64_BUILD_DIR := $(THESEUS_SRC)/third-party/bgfx/.build/win64_mingw-gcc/bin
+WIN64_CFLAGS  += -DTHESEUS_USE_BGFX=1 \
+                 -I$(THESEUS_SRC)/third-party/bgfx/include \
+                 -I$(THESEUS_SRC)/third-party/bx/include \
+                 -I$(THESEUS_SRC)/third-party/bimg/include \
+                 -I$(THESEUS_SRC)/third-party/bx/include/compat/mingw
+WIN64_LDFLAGS += $(BGFX_WIN64_BUILD_DIR)/libbgfxRelease.a \
+                 $(BGFX_WIN64_BUILD_DIR)/libbxRelease.a \
+                 $(BGFX_WIN64_BUILD_DIR)/libbimgRelease.a \
+                 -lgdi32 -lpsapi
 
-# Source list mirrors desktop's BGFX branching (imgui_impl_bgfx
-# instead of imgui_impl_opengl3 when BGFX=1).
 WIN64_SRCS = $(filter-out \
   $(THESEUS_SRC)/desktop/imgui/imgui_impl_opengl3.cpp \
   $(THESEUS_SRC)/desktop/imgui_impl_bgfx.cpp, $(DESKTOP_ALL_SRCS))
-ifdef BGFX
-  WIN64_SRCS += $(THESEUS_SRC)/desktop/imgui_impl_bgfx.cpp
-else
-  WIN64_SRCS += $(THESEUS_SRC)/desktop/imgui/imgui_impl_opengl3.cpp
-endif
+WIN64_SRCS += $(THESEUS_SRC)/desktop/imgui_impl_bgfx.cpp
 
 # Same source list as desktop. the compiler reads the same files.
 WIN64_OBJS = $(patsubst $(THESEUS_SRC)/%.cpp,$(WIN64_DIR)/%.o,$(WIN64_SRCS))
@@ -1280,6 +1311,11 @@ LINUX_ARM64_CFLAGS = \
 	$(LINUX_ARM64_MPV_CFLAGS) \
 	$(LINUX_ARM64_CURL_CFLAGS) \
 	$(PROJECTM_LINUX_ARM64_CFLAGS) \
+	-DTHESEUS_USE_BGFX=1 \
+	-I$(THESEUS_SRC)/third-party/bgfx/include \
+	-I$(THESEUS_SRC)/third-party/bx/include \
+	-I$(THESEUS_SRC)/third-party/bimg/include \
+	-I$(THESEUS_SRC)/third-party/bx/include/compat/linux \
 	-Wno-write-strings \
 	-Wno-deprecated-declarations \
 	-Wno-reorder \
@@ -1293,10 +1329,17 @@ LINUX_ARM64_CFLAGS = \
 	-Wno-dangling-else \
 	-Wno-format
 
+# bgfx arm64 libs must be built for this cross target (unverified path);
+# bgfx picks Vulkan/GLES at runtime like the x64 Linux build.
+LINUX_ARM64_BGFX_BUILD_DIR := $(THESEUS_SRC)/third-party/bgfx/.build/linux-arm64_gcc/bin
 LINUX_ARM64_LDFLAGS = \
 	-L$(LINUX_ARM64_SDL2_LIB) \
 	-lSDL2 -lSDL2_mixer \
 	-lGL \
+	$(LINUX_ARM64_BGFX_BUILD_DIR)/libbgfxRelease.a \
+	$(LINUX_ARM64_BGFX_BUILD_DIR)/libbxRelease.a \
+	$(LINUX_ARM64_BGFX_BUILD_DIR)/libbimgRelease.a \
+	-lvulkan -lX11 -ldl -lpthread \
 	$(LINUX_ARM64_MPV_LDFLAGS) \
 	$(LINUX_ARM64_CURL_LDFLAGS) \
 	$(PROJECTM_LINUX_ARM64_LDFLAGS) \

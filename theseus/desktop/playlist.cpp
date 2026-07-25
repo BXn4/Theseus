@@ -1,8 +1,10 @@
+// Named playlists stored in Configs/playlists.ini.
+
 #include "playlist.h"
+#include "xboxfs_drive.h"
 
 #include <cstdio>
 #include <cstring>
-#include <sys/stat.h>
 
 static std::vector<Playlist> s_playlists;
 static bool                  s_dirty = false;
@@ -53,14 +55,7 @@ void Playlist_LoadAll() {
 }
 
 void Playlist_SaveAll() {
-    struct stat st;
-    if (stat("Configs", &st) != 0) {
-#ifdef _WIN32
-        system("mkdir Configs >nul 2>&1");
-#else
-        system("mkdir -p Configs");
-#endif
-    }
+    Plat_MkdirP("Configs");
     FILE* fp = fopen(kPath, "w");
     if (!fp) return;
     for (size_t i = 0; i < s_playlists.size(); i++) {

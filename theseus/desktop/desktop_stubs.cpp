@@ -55,8 +55,6 @@ void TitleArray_Init() {}
 
 // NewFailed is now implemented in memutil.cpp
 
-// XCDROM_TOC stubs removed; type no longer exists in desktop build.
-
 // DiscManager stubs - from DiscManager.cpp (removed)
 bool DiscManager::IsDiscPresent() { return false; }
 bool DiscManager::ReadDiscTitle(WCHAR*, size_t) { return false; }

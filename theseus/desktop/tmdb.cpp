@@ -16,6 +16,7 @@
 #include <atomic>
 
 #include "http_util.h"
+#include "json_util.h"
 
 extern char g_tmdbKey[128];   // defined in sdl_main.cpp; loaded from desktop.ini
 
@@ -23,7 +24,6 @@ static std::mutex                       g_resultMutex;
 static std::map<std::string, TmdbMovie> s_movieResults;
 static std::map<std::string, TmdbShow>  s_showResults;
 static std::map<std::string, std::atomic<bool>*> s_inFlight;
-static bool                             s_initialized = false;
 
 
 // ============================================================================
@@ -141,116 +141,13 @@ static std::string UrlEncode(const char* s)
 }
 
 
-// ============================================================================
-// Targeted JSON field extraction.
-// We never need full nested parsing. Just grab the first occurrence of
-// "key": "..." or "key": N. Greedy enough for TMDB's flat result shapes.
-// ============================================================================
-
-// Find "key": then return offset of the value start, or std::string::npos.
-static size_t FindKey(const std::string& json, const char* key)
-{
-    std::string needle = "\"";
-    needle += key;
-    needle += "\"";
-    size_t k = json.find(needle);
-    if (k == std::string::npos) return std::string::npos;
-    size_t c = json.find(':', k + needle.size());
-    if (c == std::string::npos) return std::string::npos;
-    c++;
-    while (c < json.size() && (json[c] == ' ' || json[c] == '\t')) c++;
-    return c;
-}
-
-// Decode \" \\ \/ \n \t \uXXXX (latin-1 only); enough for TMDB overview text.
-static std::string DecodeJsonString(const char* s, size_t len)
-{
-    std::string out;
-    out.reserve(len);
-    for (size_t i = 0; i < len; i++) {
-        char c = s[i];
-        if (c != '\\' || i + 1 >= len) { out.push_back(c); continue; }
-        char n = s[++i];
-        switch (n) {
-            case '"': out.push_back('"'); break;
-            case '\\': out.push_back('\\'); break;
-            case '/': out.push_back('/'); break;
-            case 'n': out.push_back('\n'); break;
-            case 'r': out.push_back('\r'); break;
-            case 't': out.push_back('\t'); break;
-            case 'b': out.push_back('\b'); break;
-            case 'f': out.push_back('\f'); break;
-            case 'u': {
-                if (i + 4 < len) {
-                    char hex[5] = { s[i+1], s[i+2], s[i+3], s[i+4], 0 };
-                    int code = (int)strtol(hex, NULL, 16);
-                    i += 4;
-                    if (code < 0x80) out.push_back((char)code);
-                    else if (code < 0x800) {
-                        out.push_back((char)(0xC0 | (code >> 6)));
-                        out.push_back((char)(0x80 | (code & 0x3F)));
-                    } else {
-                        out.push_back((char)(0xE0 | (code >> 12)));
-                        out.push_back((char)(0x80 | ((code >> 6) & 0x3F)));
-                        out.push_back((char)(0x80 | (code & 0x3F)));
-                    }
-                }
-                break;
-            }
-            default: out.push_back(n); break;
-        }
-    }
-    return out;
-}
-
-static std::string GetString(const std::string& json, const char* key)
-{
-    size_t v = FindKey(json, key);
-    if (v == std::string::npos || v >= json.size() || json[v] != '"') return "";
-    v++;
-    size_t end = v;
-    while (end < json.size()) {
-        if (json[end] == '\\' && end + 1 < json.size()) { end += 2; continue; }
-        if (json[end] == '"') break;
-        end++;
-    }
-    if (end >= json.size()) return "";
-    return DecodeJsonString(json.data() + v, end - v);
-}
-
-static int GetInt(const std::string& json, const char* key)
-{
-    size_t v = FindKey(json, key);
-    if (v == std::string::npos) return 0;
-    return (int)strtol(json.c_str() + v, NULL, 10);
-}
-
-static float GetFloat(const std::string& json, const char* key)
-{
-    size_t v = FindKey(json, key);
-    if (v == std::string::npos) return 0.0f;
-    return (float)strtod(json.c_str() + v, NULL);
-}
-
-// First object in "results": [{...}, ...] — returns substring or empty.
+// First object in "results": [{...}, ...], or empty.
 static std::string GetFirstResult(const std::string& json)
 {
-    size_t r = json.find("\"results\"");
-    if (r == std::string::npos) return "";
-    size_t lb = json.find('[', r);
-    if (lb == std::string::npos) return "";
-    size_t ob = json.find('{', lb);
-    if (ob == std::string::npos) return "";
-    int depth = 0;
-    size_t i = ob;
-    for (; i < json.size(); i++) {
-        if (json[i] == '{') depth++;
-        else if (json[i] == '}') {
-            depth--;
-            if (depth == 0) return json.substr(ob, i - ob + 1);
-        }
-    }
-    return "";
+    size_t arr = Json_FindArray(json, "results");
+    if (arr == std::string::npos) return "";
+    std::vector<std::string> items = Json_SplitArray(json, arr);
+    return items.empty() ? "" : items[0];
 }
 
 // First 4 chars after a YYYY-MM-DD field as int.
@@ -272,12 +169,11 @@ static TmdbMovie ParseMovieJson(const std::string& json)
     std::string first = GetFirstResult(json);
     if (first.empty()) return m;
     m.found       = true;
-    m.title       = GetString(first, "title");
-    m.overview    = GetString(first, "overview");
-    m.year        = YearFromDate(GetString(first, "release_date"));
-    m.posterPath  = GetString(first, "poster_path");
-    m.voteAverage = GetFloat(first, "vote_average");
-    m.tmdbId      = GetInt(first, "id");
+    m.title       = Json_GetString(first, "title");
+    m.overview    = Json_GetString(first, "overview");
+    m.year        = YearFromDate(Json_GetString(first, "release_date"));
+    m.voteAverage = Json_GetFloat(first, "vote_average");
+    m.tmdbId      = Json_GetInt(first, "id");
     return m;
 }
 
@@ -288,12 +184,11 @@ static TmdbShow ParseShowJson(const std::string& json)
     std::string first = GetFirstResult(json);
     if (first.empty()) return s;
     s.found       = true;
-    s.title       = GetString(first, "name");
-    s.overview    = GetString(first, "overview");
-    s.year        = YearFromDate(GetString(first, "first_air_date"));
-    s.posterPath  = GetString(first, "poster_path");
-    s.voteAverage = GetFloat(first, "vote_average");
-    s.tmdbId      = GetInt(first, "id");
+    s.title       = Json_GetString(first, "name");
+    s.overview    = Json_GetString(first, "overview");
+    s.year        = YearFromDate(Json_GetString(first, "first_air_date"));
+    s.voteAverage = Json_GetFloat(first, "vote_average");
+    s.tmdbId      = Json_GetInt(first, "id");
     return s;
 }
 
@@ -352,15 +247,8 @@ static TmdbShow DoShowLookup(const std::string& title, const std::string& key)
 // Public API
 // ============================================================================
 
-void TMDB_Init()
-{
-    s_initialized = true;
-}
-
-void TMDB_Shutdown()
-{
-    s_initialized = false;
-}
+void TMDB_Init() {}
+void TMDB_Shutdown() {}
 
 bool TMDB_HasKey()
 {

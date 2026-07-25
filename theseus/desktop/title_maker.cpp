@@ -281,8 +281,8 @@ static int TM_ReadIconsIni(char keys[][128], char vals[][128]) {
         char* nl = strchr(line, '\n'); if (nl) *nl = 0;
         char* cr = strchr(line, '\r'); if (cr) *cr = 0;
         if (line[0] == 0) continue;
-        // Skip anything without an =. We used to skip lines starting with [
-        // but ROM names can start with [ too.
+        // Skip anything without an =. Don't skip on a leading [ , since ROM
+        // names can start with one.
         char* eq = strchr(line, '=');
         if (eq) {
             *eq = 0;

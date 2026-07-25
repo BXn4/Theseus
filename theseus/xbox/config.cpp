@@ -731,7 +731,7 @@ int CConfig::FileExists(const TCHAR* FileName) { return NtFileExists(FileName); 
 
 CStrObject *CConfig::GetRecoveryKey()
 {
-	// Parental-lock recovery codes aren't meaningful on modified hardware.
+	// Parental lock recovery codes aren't meaningful on modified hardware.
 	return new CStrObject(_T(""));
 }
 

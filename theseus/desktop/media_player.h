@@ -1,5 +1,5 @@
 // media_player.h: libmpv wrapper public API. Renders video frames
-// to an OpenGL texture for display in the DVD player XAP scene.
+// to a bgfx texture for display in the DVD player XAP scene.
 // Companion to desktop/media_player.cpp.
 
 #pragma once
@@ -37,7 +37,6 @@ void MediaPlayer_SeekRelative(double delta);  // relative seek (+/- seconds)
 void MediaPlayer_NextChapter();
 void MediaPlayer_PrevChapter();
 int  MediaPlayer_GetChapter();
-int  MediaPlayer_GetChapterCount();
 
 // Audio/subtitle track cycling
 void MediaPlayer_NextAudioTrack();
@@ -69,15 +68,13 @@ double MediaPlayer_GetDuration();   // total duration in seconds
 bool   MediaPlayer_HasVideo();      // true if current file has a video stream
 
 // Video frame rendering
-// Call each frame when media is playing. Returns the GL texture ID of the
-// current video frame, or 0 if no frame is available. Width/height are output.
+// Call each frame when media is playing. Returns the bgfx texture handle
+// of the current video frame, or 0 if no frame is available. Width/height
+// are output.
 unsigned int MediaPlayer_GetVideoTexture(int* outWidth, int* outHeight);
 
 // Update (call each frame to process mpv events)
 void MediaPlayer_Update();
-
-// Get the raw FBO ID (for glBlitFramebuffer)
-unsigned int MediaPlayer_GetFBO();
 
 // Render current frame directly to framebuffer 0 (the screen)
 void MediaPlayer_RenderToScreen(int screenW, int screenH);

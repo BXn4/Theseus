@@ -1,7 +1,7 @@
-// dashinit.cpp: desktop dashboard init / shutdown. Boots the SDL +
-// OpenGL platform layer, loads Config.ini, brings up the audio
-// engine and asset preloader. Counterpart to the InitApp /
-// CleanupApp pair in xbox/main.cpp.
+// dashinit.cpp: desktop dashboard init / shutdown. Boots the SDL
+// platform layer, loads Config.ini, brings up the audio engine and
+// asset preloader. Counterpart to the InitApp / CleanupApp pair in
+// xbox/main.cpp.
 
 #include "std.h"
 #include "dashapp.h"

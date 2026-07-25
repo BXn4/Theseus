@@ -7,6 +7,7 @@
 #include "hdd_browser.h"
 #include "imgui.h"
 #include "imfilebrowser.h"
+#include "platform_env.h"
 
 #include <cstdio>
 #include <cstring>
@@ -485,8 +486,8 @@ void RenderHDDBrowser() {
     if (ImGui::BeginPopup("CreateNewHDD")) {
         static char s_createPath[512] = "";
         if (!s_createPath[0]) {
-            const char* home = getenv("HOME");
-            if (home) snprintf(s_createPath, sizeof(s_createPath), "%s/xbox_hdd.qcow2", home);
+            const char* home = PlatformHomeDir();
+            if (*home) snprintf(s_createPath, sizeof(s_createPath), "%s/xbox_hdd.qcow2", home);
         }
         ImGui::Text("Create a new Xbox HDD image with formatted FATX partitions.");
         ImGui::Spacing();

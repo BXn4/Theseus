@@ -1021,7 +1021,7 @@ static void UpdateFalloffColor(CMatInfo *p, D3DCOLOR colorSide, D3DCOLOR colorFr
 	pMat->m_colorFront = colorFront;
 }
 
-// Public introspection / live edit API used by the Skin Editor. Desktop-only:
+// Public introspection / live edit API used by the Skin Editor. Desktop only:
 // the dashboard never edits materials at runtime, and dynamic_cast here is the
 // only thing that would force RTTI into the Xbox build.
 #ifndef _XBOX

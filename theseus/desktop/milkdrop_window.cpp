@@ -15,8 +15,6 @@ void MilkdropWindow_Shutdown() {}
 unsigned int MilkdropWindow_GetWindowID()    { return 0; }
 void         MilkdropWindow_ToggleFullscreen() {}
 unsigned short MilkdropWindow_GetBgfxTexId() { return 0xFFFF; }
-int            MilkdropWindow_GetTexW()      { return 0; }
-int            MilkdropWindow_GetTexH()      { return 0; }
 const unsigned char* MilkdropWindow_GetReadbackRGBA(int*, int*) { return nullptr; }
 void   MilkdropWindow_SetPreviewVisible(bool) {}
 void   MilkdropWindow_NextPreset() {}
@@ -358,9 +356,6 @@ unsigned short MilkdropWindow_GetBgfxTexId()
 {
     return bgfx::isValid(s_bgfxTex) ? s_bgfxTex.idx : (unsigned short)0xFFFF;
 }
-
-int MilkdropWindow_GetTexW() { return bgfx::isValid(s_bgfxTex) ? kFboW : 0; }
-int MilkdropWindow_GetTexH() { return bgfx::isValid(s_bgfxTex) ? kFboH : 0; }
 
 const unsigned char* MilkdropWindow_GetReadbackRGBA(int* outW, int* outH)
 {

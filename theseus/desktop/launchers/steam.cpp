@@ -1,27 +1,19 @@
-// steam.cpp: Steam launcher module. Two responsibilities:
+// steam.cpp: Steam install discovery. Steam_DiscoverInstallRoots and
+// Steam_DiscoverLibraries enumerate every Steam install + library
+// directory on disk so Title Maker's Import Steam button can populate
+// without users hunting for paths.
 //
-//   1. Launcher contract -- claims `steam://...` specs so the
-//      dispatcher routes them through the Steam path (which, on
-//      Linux, prefers calling the `steam` binary directly to bypass
-//      KIO/xdg-open's "Unknown protocol 'steam'" failure mode).
-//
-//   2. Discovery API -- Steam_DiscoverInstallRoots and
-//      Steam_DiscoverLibraries enumerate every Steam install +
-//      library directory the user has on disk so Title Maker's
-//      Import Steam button can populate without users having to
-//      hunt for paths manually.
-//
-// The discovery side is intentionally over-thorough on path
-// coverage. We've heard "Steam isn't being detected" complaints
-// from users running Flatpak Steam, Debian's repackaged steam-
+// Path coverage is intentionally over-thorough. We've heard "Steam
+// isn't being detected" from Flatpak Steam, Debian's repackaged steam-
 // installer, custom drive letters on Windows, and Steam Deck's
-// `~/.local/share/Steam`. Each variant gets its own candidate
-// here. Users with truly weird setups can still set
-// [Desktop] SteamPath= in desktop.ini to point at the install
-// root (or steamapps/) directly; that path is preferred over
-// auto-detected ones.
+// `~/.local/share/Steam`. Each variant gets its own candidate. Users
+// with truly weird setups can set [Desktop] SteamPath= in desktop.ini
+// to point at the install root (or steamapps/) directly; that path is
+// preferred over auto-detected ones.
+//
+// steam:// specs launch through the generic URL path in launch.cpp
+// (Launch_DoSpawn detects the scheme); there's no launcher module here.
 
-#include "launcher.h"
 #include "steam.h"
 
 #include <cstdio>
@@ -34,32 +26,6 @@
 #endif
 
 namespace {
-
-// ----- Launcher contract ------------------------------------------------
-
-bool Claims(const char* spec) {
-	if (!spec) return false;
-	const char* p = spec;
-	while (*p == ' ' || *p == '\t') p++;
-	return strncmp(p, "steam://", 8) == 0;
-}
-
-bool Build(const char* spec, char* outCmd, size_t outSize) {
-	if (!spec || !outCmd || outSize == 0) return false;
-	size_t n = strlen(spec);
-	if (n >= outSize) n = outSize - 1;
-	memcpy(outCmd, spec, n);
-	outCmd[n] = '\0';
-	return true;
-}
-
-const Launcher kSteamLauncher = {
-	"steam",
-	"Steam",
-	Claims,
-	100,        // ahead of url (500), shell (1000)
-	Build,
-};
 
 // ----- Discovery helpers ------------------------------------------------
 
@@ -208,10 +174,6 @@ void ParseLibraryFoldersVdf(const char* steamappsDir,
 }
 
 } // namespace
-
-void Launcher_RegisterSteam() {
-	Launcher_Register(&kSteamLauncher);
-}
 
 int Steam_DiscoverInstallRoots(const char* userOverride,
                                 char outRoots[][512], int maxRoots) {

@@ -1,12 +1,7 @@
-// steam.h: Steam launcher module discovery API. Title Maker's
-// "Import Steam Library" button (and any future caller) walks this
-// to find every steamapps/ directory the user has on disk, then
-// scans appmanifest_*.acf inside each to enumerate installed games.
-//
-// The Launcher struct's Claims/Build are registered separately via
-// Launcher_RegisterSteam() in steam.cpp; these declarations expose
-// the Steam-specific helpers that other modules (Title Maker, future
-// first-run wizard) need.
+// steam.h: Steam install discovery API. Title Maker's "Import Steam
+// Library" button walks this to find every steamapps/ directory the
+// user has on disk, then scans appmanifest_*.acf inside each to
+// enumerate installed games.
 
 #pragma once
 

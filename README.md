@@ -207,7 +207,7 @@ After that, the per-OS build commands:
 **macOS:**
 ```
 brew install sdl2 sdl2_mixer mpv curl pkg-config
-cd build && make desktop BGFX=1
+cd build && make desktop
 ~/builds/theseus/desktop/theseus
 ```
 
@@ -215,7 +215,7 @@ cd build && make desktop BGFX=1
 ```
 sudo apt install build-essential pkg-config libsdl2-dev libsdl2-mixer-dev \
                  libvulkan-dev libx11-dev libmpv-dev libcurl4-openssl-dev
-cd build && make desktop BGFX=1
+cd build && make desktop
 ~/builds/theseus/desktop/theseus
 ```
 
@@ -225,12 +225,10 @@ pacman -S make pkg-config mingw-w64-x86_64-gcc \
           mingw-w64-x86_64-SDL2 mingw-w64-x86_64-SDL2_mixer \
           mingw-w64-x86_64-mpv mingw-w64-x86_64-curl \
           mingw-w64-x86_64-vulkan-headers mingw-w64-x86_64-vulkan-loader
-cd build && make desktop-win64 BGFX=1
+cd build && make desktop-win64
 ```
 
 Cross-compiling for Windows from macOS / Linux, ARM64 Linux, or any of the more involved setups is in [`docs/desktop/`](docs/desktop/). The CI workflow runs all the build matrix combinations on every push, which is the closest thing to executable docs for the one-time setup.
-
-The legacy OpenGL backend still compiles by dropping the `BGFX=1` flag, useful for older hardware without Vulkan support. Shipped releases use the bgfx path.
 
 ## How it works
 
@@ -295,7 +293,7 @@ Desktop build:
 | [bgfx](https://github.com/bkaradzic/bgfx) | BSD 2-Clause | Cross-platform render abstraction (Metal, Vulkan) |
 | [bx](https://github.com/bkaradzic/bx) | BSD 2-Clause | bgfx base library |
 | [bimg](https://github.com/bkaradzic/bimg) | BSD 2-Clause | bgfx image utility library |
-| [GLEW](https://glew.sourceforge.net/) | Modified BSD / MIT | OpenGL extension loader (legacy GL backend, Windows only) |
+| [GLEW](https://glew.sourceforge.net/) | Modified BSD / MIT | OpenGL extension loader (projectM / milkdrop visualizer, Windows only) |
 
 Full catalog with attributions is in [`LICENSE-THIRD-PARTY.md`](LICENSE-THIRD-PARTY.md).
 

@@ -2,6 +2,8 @@
 
 #include "jellyfin_client.h"
 #include "http_util.h"
+#include "json_util.h"
+#include "client_util.h"
 
 #include <cstdio>
 #include <cstring>
@@ -25,17 +27,6 @@ extern void SaveDesktopSettings();
 // Identity + headers
 // ============================================================================
 
-static void GenerateUUID(char out[37])
-{
-    unsigned char b[16];
-    for (int i = 0; i < 16; i++) b[i] = (unsigned char)(rand() & 0xFF);
-    b[6] = (b[6] & 0x0F) | 0x40;
-    b[8] = (b[8] & 0x3F) | 0x80;
-    snprintf(out, 37,
-        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-        b[0],b[1],b[2],b[3], b[4],b[5], b[6],b[7],
-        b[8],b[9], b[10],b[11],b[12],b[13],b[14],b[15]);
-}
 
 // Jellyfin/Emby auth header. Inherits Emby's quirky format: a single
 // Authorization header with comma-separated key=value pairs.
@@ -64,90 +55,7 @@ static HttpHeaders JellyfinHeaders(const char* token)
 }
 
 
-// ============================================================================
-// Minimal JSON helpers (same shape as plex_client.cpp). Jellyfin's JSON keys
-// are PascalCase ("AccessToken", "Name") -- pass them literally.
-// ============================================================================
-
-static size_t Json_FindKey(const std::string& s, const char* key, size_t from = 0)
-{
-    std::string needle = "\"";
-    needle += key;
-    needle += "\"";
-    size_t k = s.find(needle, from);
-    if (k == std::string::npos) return std::string::npos;
-    size_t c = s.find(':', k + needle.size());
-    if (c == std::string::npos) return std::string::npos;
-    c++;
-    while (c < s.size() && (s[c] == ' ' || s[c] == '\t')) c++;
-    return c;
-}
-
-static std::string Json_GetString(const std::string& s, const char* key, size_t from = 0)
-{
-    size_t v = Json_FindKey(s, key, from);
-    if (v == std::string::npos || v >= s.size() || s[v] != '"') return "";
-    v++;
-    size_t end = v;
-    while (end < s.size()) {
-        if (s[end] == '\\' && end + 1 < s.size()) { end += 2; continue; }
-        if (s[end] == '"') break;
-        end++;
-    }
-    if (end >= s.size()) return "";
-    return s.substr(v, end - v);
-}
-
-static bool Json_GetBool(const std::string& s, const char* key)
-{
-    size_t v = Json_FindKey(s, key);
-    if (v == std::string::npos) return false;
-    return strncmp(s.c_str() + v, "true", 4) == 0;
-}
-
-static int Json_GetInt(const std::string& s, const char* key, size_t from = 0)
-{
-    size_t v = Json_FindKey(s, key, from);
-    if (v == std::string::npos) return 0;
-    return (int)strtol(s.c_str() + v, NULL, 10);
-}
-
-static size_t Json_FindArray(const std::string& s, const char* key)
-{
-    size_t v = Json_FindKey(s, key);
-    if (v == std::string::npos) return std::string::npos;
-    while (v < s.size() && (s[v] == ' ' || s[v] == '\t')) v++;
-    if (v >= s.size() || s[v] != '[') return std::string::npos;
-    return v;
-}
-
-static std::vector<std::string> Json_SplitArray(const std::string& s, size_t arrStart)
-{
-    std::vector<std::string> out;
-    if (arrStart >= s.size() || s[arrStart] != '[') return out;
-    size_t i = arrStart + 1;
-    while (i < s.size()) {
-        while (i < s.size() && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t' || s[i] == ',')) i++;
-        if (i >= s.size() || s[i] == ']') break;
-        if (s[i] != '{') { i++; continue; }
-        size_t start = i;
-        int depth = 0;
-        bool inStr = false;
-        for (; i < s.size(); i++) {
-            char c = s[i];
-            if (inStr) {
-                if (c == '\\' && i + 1 < s.size()) { i++; continue; }
-                if (c == '"') inStr = false;
-            } else {
-                if (c == '"') inStr = true;
-                else if (c == '{') depth++;
-                else if (c == '}') { depth--; if (depth == 0) { i++; break; } }
-            }
-        }
-        out.push_back(s.substr(start, i - start));
-    }
-    return out;
-}
+// Jellyfin's JSON keys are PascalCase ("AccessToken", "Name"); pass literally.
 
 // Pull ImageTags.Primary out of an item object. Nested object lookup.
 static std::string ParsePrimaryTag(const std::string& obj)
@@ -204,10 +112,6 @@ void Jellyfin_Init()
     fprintf(stderr, "[Jellyfin] init (token=%s, url=%s)\n",
             g_jellyfinToken[0] ? "yes" : "no",
             g_jellyfinUrl[0] ? g_jellyfinUrl : "(unset)");
-}
-
-static void JoinIf(std::thread& t) {
-    if (t.joinable()) t.join();
 }
 
 void Jellyfin_Shutdown()
@@ -665,14 +569,6 @@ std::string Jellyfin_StreamUrl(const std::string& itemId)
 // ============================================================================
 // Cover art
 // ============================================================================
-
-static inline int Mkdir_(const char* path) {
-#ifdef _WIN32
-    return mkdir(path);
-#else
-    return mkdir(path, 0755);
-#endif
-}
 
 static std::string ArtHostPath(const std::string& itemId)
 {

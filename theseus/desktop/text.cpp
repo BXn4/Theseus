@@ -82,7 +82,7 @@ public:
 	int FindGlyphIndex(WCHAR wch);
 	void CreateTextMesh(const char* pchText, int nChars, LPD3DXMESH* ppMesh, D3DXVECTOR3* pMin, D3DXVECTOR3* pMax, float nFormatWidth, bool bDoNotBreak, float scale);
 	void CreateCursorMesh(uint16_t*& indices, int& nCurIndex, TEXTVERTEX*& verts, int& nCurVertex, float x, float y, bool visible);
-    bool IsBreakChar(char ch);
+    bool IsBreakChar(WCHAR ch);
 
 	HANDLE m_hFile;
 	CGlyphSet* m_pGlyphSet;
@@ -246,6 +246,30 @@ bool CFont::LoadGlyph(int nGlyphIndex)
 	return true;
 }
 
+// Decode one UTF-8 codepoint from s starting at i (n is the byte count).
+// Returns the codepoint and sets outLen to the bytes consumed. A stray or
+// truncated byte decodes as itself (outLen 1) so ASCII and Latin-1 fallbacks
+// still render something. BMP only; astral planes truncate, which the vector
+// fonts don't cover anyway.
+static WCHAR DecodeUTF8(const char* s, int i, int n, int& outLen)
+{
+	unsigned char c = (unsigned char)s[i];
+	if (c < 0x80) { outLen = 1; return c; }
+	unsigned int cp; int len;
+	if      ((c & 0xE0) == 0xC0) { cp = c & 0x1F; len = 2; }
+	else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
+	else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
+	else { outLen = 1; return c; }
+	if (i + len > n) { outLen = 1; return c; }
+	for (int k = 1; k < len; k++) {
+		unsigned char cc = (unsigned char)s[i + k];
+		if ((cc & 0xC0) != 0x80) { outLen = 1; return c; }
+		cp = (cp << 6) | (cc & 0x3F);
+	}
+	outLen = len;
+	return (WCHAR)cp;
+}
+
 int CFont::FindGlyphIndex(WCHAR wch)
 {
 	if (m_pGlyphSet == NULL)
@@ -367,7 +391,7 @@ static void VerticalFade(TEXTVERTEX* verts, int nVertexCount, float nTop, float 
 	}
 }
 
-bool CFont::IsBreakChar(char ch)
+bool CFont::IsBreakChar(WCHAR ch)
 {
     // Basically, we will break after double byte or single byte Kana
     if (ch == ' ' || (ch >= 0x3040 && ch < 0xF000) || ch >= 0xFF66)
@@ -422,8 +446,9 @@ void CFont::CreateTextMesh(const char* pchText, int nChars, LPD3DXMESH* ppMesh, 
 
 		while (ich < nChars)
 		{
-			char ch = pchText[ich];
-			ich += 1;
+			int chLen;
+			WCHAR ch = DecodeUTF8(pchText, ich, nChars, chLen);
+			ich += chLen;
 
 			if (ch == '*')
 			{
@@ -575,11 +600,12 @@ void CFont::CreateTextMesh(const char* pchText, int nChars, LPD3DXMESH* ppMesh, 
 
 		for (;;)
 		{
-			char ch = '\r';
+			WCHAR ch = '\r';
 			if (ich < nChars)
 			{
-				ch = pchText[ich];
-				ich += 1;
+				int chLen;
+				ch = DecodeUTF8(pchText, ich, nChars, chLen);
+				ich += chLen;
 
 				if (ch == '\r' && ich < nChars && pchText[ich] == '\n')
 					ich += 1;

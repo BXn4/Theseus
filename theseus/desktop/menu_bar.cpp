@@ -11,6 +11,7 @@
 #include "imgui.h"
 #include "plex_client.h"
 #include "jellyfin_client.h"
+#include "xcloud_client.h"
 #include "media_player.h"
 #include "milkdrop_window.h"
 
@@ -20,8 +21,6 @@ extern float g_masterVolume;
 #include <cstdio>
 #include <cstring>
 #include <sys/stat.h>
-
-extern bool s_scanPanelVisible;   // defined later in this file
 
 extern "C" void MediaDB_ScanAndCache();
 extern "C" void MediaDB_RefreshMovies();
@@ -52,8 +51,7 @@ bool g_projectMConfigOpen = false;
 
 // Old "Open Media..." file-browser removed. Playback now flows through
 // the Media Library (CMediaCollection.PlayMovie/PlayEpisode -> MediaUI
-// fullscreen). The legacy CDVDPlayer XAP scene was painful to wire up
-// and is no longer the desktop's playback path.
+// fullscreen).
 
 void ToggleSettingsWindow() { g_settingsOpen = !g_settingsOpen; }
 
@@ -93,7 +91,9 @@ static const char* s_msaaLabels[] = { "Off", "2x", "4x", "8x" };
 static const int   s_msaaValues[] = { 0, 2, 4, 8 };
 static const int   s_msaaCount = 4;
 
-static const char* s_vsyncLabels[] = { "Adaptive", "On", "Off" };
+// bgfx has no adaptive vsync, so the control is a plain On/Off. g_vsyncMode
+// still stores 0/1 = on, 2 = off for config compatibility.
+static const char* s_vsyncLabels[] = { "On", "Off" };
 
 static const char* s_resLabels[] = { "Native", "720p", "1080p", "1440p (2K)", "2160p (4K)" };
 static const int   s_resValues[] = {  0,        720,    1080,    1440,         2160 };
@@ -242,17 +242,10 @@ void RenderMainMenuBar() {
                 }
                 if (!g_debugMode && g_bWireframe) {
                     g_bWireframe = false;
-#ifndef THESEUS_USE_BGFX
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-#endif
                 }
             }
             if (ImGui::MenuItem("XAP Editor", "F2", g_xapEditorOpen)) {
                 g_xapEditorOpen = !g_xapEditorOpen;
-                if (g_xapEditorOpen)
-                    CreateXapEditorWindow();
-                else
-                    DestroyXapEditorWindow();
             }
             ImGui::EndMenu();
         }
@@ -403,7 +396,9 @@ void RenderSettingsWindow() {
 
             ImGui::AlignTextToFramePadding(); ImGui::Text("VSync:");
             ImGui::SameLine(kLabelX); ImGui::SetNextItemWidth(kWidgetW);
-            if (ImGui::Combo("##vsync", &g_vsyncMode, s_vsyncLabels, 3)) {
+            int vsyncIdx = (g_vsyncMode == 2) ? 1 : 0;
+            if (ImGui::Combo("##vsync", &vsyncIdx, s_vsyncLabels, 2)) {
+                g_vsyncMode = (vsyncIdx == 1) ? 2 : 0;
                 g_vsyncChangeRequested = true;
                 SaveDesktopSettings();
             }
@@ -796,6 +791,125 @@ void RenderSettingsWindow() {
             }
             } // Jellyfin header
 
+            if (ImGui::CollapsingHeader("Xbox / xCloud")) {
+            ImGui::Spacing();
+
+            if (Xcloud_HasToken()) {
+                Xcloud_StartSession();
+
+                if (!Xcloud_SessionReady()) {
+                    ImGui::Text("%s", Xcloud_SessionPhase().c_str());
+                } else {
+                    std::string gt = Xcloud_GetGamertag();
+                    ImGui::TextColored(ImVec4(0.55f, 1.0f, 0.55f, 1.0f),
+                        "Signed in%s%s.", gt.empty() ? "" : " as ", gt.c_str());
+                    ImGui::Spacing();
+
+                    Xcloud_FetchConsoles();
+                    ImGui::TextDisabled("Your consoles");
+                    ImGui::Separator();
+                    if (!Xcloud_ConsolesReady()) {
+                        ImGui::TextDisabled("Loading...");
+                    } else {
+                        std::vector<XcloudConsole> cs = Xcloud_GetConsoles();
+                        if (cs.empty()) ImGui::TextDisabled("None found.");
+                        for (size_t i = 0; i < cs.size(); i++) {
+                            ImGui::PushID((int)i);
+                            ImGui::Text("%s  (%s)", cs[i].name.c_str(), cs[i].powerState.c_str());
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Stream")) {
+                                extern void Xcloud_LaunchStream(const char* type, const char* id);
+                                Xcloud_LaunchStream("home", cs[i].serverId.c_str());
+                                g_settingsOpen = false;
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+                    ImGui::Spacing();
+
+                    Xcloud_FetchGames();
+                    ImGui::TextDisabled("Your xCloud games");
+                    ImGui::SameLine();
+                    static bool s_showAllGames = false;
+                    ImGui::Checkbox("Show all", &s_showAllGames);
+                    ImGui::Separator();
+                    if (!Xcloud_GamesReady()) {
+                        ImGui::TextDisabled("Loading...");
+                    } else {
+                        std::vector<XcloudGame> gs = Xcloud_GetGames();
+                        int shown = 0;
+                        ImGui::BeginChild("xcgames", ImVec2(0, 180), true);
+                        for (size_t i = 0; i < gs.size(); i++) {
+                            if (!s_showAllGames && !gs[i].playable) continue;   // owned/GP/free only
+                            shown++;
+                            ImGui::PushID((int)(i + 10000));
+                            if (ImGui::Selectable(gs[i].name.c_str())) {
+                                extern void Xcloud_LaunchStream(const char* type, const char* id);
+                                Xcloud_LaunchStream("cloud", gs[i].titleId.c_str());
+                                g_settingsOpen = false;
+                            }
+                            ImGui::PopID();
+                        }
+                        if (shown == 0)
+                            ImGui::TextDisabled(gs.empty() ? "None found."
+                                : "Nothing playable. Tick \"Show all\" for the full catalog.");
+                        ImGui::EndChild();
+                    }
+
+                    // Session progress. This is the signaling half; the
+                    // WebRTC transport attaches once the session is up.
+                    if (Xcloud_StreamRunning() || Xcloud_StreamReady()) {
+                        ImGui::Spacing();
+                        ImGui::Separator();
+                        ImGui::Text("Stream: %s", Xcloud_StreamPhase().c_str());
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Stop##xcstream")) Xcloud_StopStreamSession();
+                    }
+                }
+                ImGui::Spacing();
+                if (ImGui::Button("Sign out##xc")) {
+                    Xcloud_SignOut();
+                    SaveDesktopSettings();
+                }
+            } else if (Xcloud_LoginInFlight()) {
+                std::string code = Xcloud_GetUserCode();
+                std::string uri  = Xcloud_GetVerificationUri();
+                if (code.empty()) {
+                    ImGui::Text("%s", Xcloud_GetLoginStatus().c_str());
+                } else {
+                    ImGui::Text("1. Open");
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1.0f), "%s", uri.c_str());
+                    ImGui::SameLine();
+                    ImGui::Text("on any device.");
+                    ImGui::Text("2. Enter this code:");
+                    ImGui::Spacing();
+
+                    ImFont* font = ImGui::GetFont();
+                    float old = font->Scale;
+                    font->Scale = 3.0f;
+                    ImGui::PushFont(font);
+                    ImVec2 sz = ImGui::CalcTextSize(code.c_str());
+                    float avail = ImGui::GetContentRegionAvail().x;
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - sz.x) * 0.5f);
+                    ImGui::TextColored(ImVec4(0.85f, 1.0f, 0.85f, 1.0f), "%s", code.c_str());
+                    ImGui::PopFont();
+                    font->Scale = old;
+
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("%s", Xcloud_GetLoginStatus().c_str());
+                }
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                if (ImGui::Button("Cancel##xc")) Xcloud_CancelLogin();
+            } else {
+                ImGui::TextDisabled("Not signed in.");
+                ImGui::Spacing();
+                if (ImGui::Button("Sign in to Xbox")) Xcloud_StartLogin();
+            }
+            } // Xbox / xCloud header
+
             ImGui::EndTabItem();
         }
 
@@ -930,11 +1044,6 @@ void RenderShortcutsWindow() {
     ImGui::End();
 }
 
-
-// Scan progress is now rendered inline in the Settings -> Media Library tab.
-// No floating panel. Keep this stub so sdl_main.cpp's PreSwap call is a no-op.
-bool s_scanPanelVisible = false;
-void RenderScanProgressModal() {}
 
 // ============================================================================
 // projectM Configuration Window

@@ -10,3 +10,6 @@
 [submodule "theseus/third-party/projectm"]
 	path = theseus/third-party/projectm
 	url = https://github.com/projectM-visualizer/projectm.git
+[submodule "theseus/third-party/libdatachannel"]
+	path = theseus/third-party/libdatachannel
+	url = https://github.com/paullouisageneau/libdatachannel.git

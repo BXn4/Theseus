@@ -75,6 +75,24 @@ HttpResponse Http_Post(const std::string& url,
     return out;
 }
 
+HttpResponse Http_Delete(const std::string& url, const HttpHeaders& headers) {
+    EnsureGlobalInit();
+    HttpResponse out;
+    CURL* h = curl_easy_init();
+    if (!h) return out;
+    ApplyCommonOpts(h, url.c_str());
+    curl_easy_setopt(h, CURLOPT_CUSTOMREQUEST, "DELETE");
+    curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, WriteToString);
+    curl_easy_setopt(h, CURLOPT_WRITEDATA, &out.body);
+    curl_slist* slist = BuildSlist(headers);
+    if (slist) curl_easy_setopt(h, CURLOPT_HTTPHEADER, slist);
+    if (curl_easy_perform(h) == CURLE_OK)
+        curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &out.status);
+    if (slist) curl_slist_free_all(slist);
+    curl_easy_cleanup(h);
+    return out;
+}
+
 std::string Http_GetToString(const std::string& url) {
     HttpResponse r = Http_Get(url);
     if (!r.ok()) return "";

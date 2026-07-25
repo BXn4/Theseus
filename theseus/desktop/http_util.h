@@ -23,3 +23,4 @@ HttpResponse Http_Get(const std::string& url, const HttpHeaders& headers = {});
 HttpResponse Http_Post(const std::string& url,
                        const std::string& body = "",
                        const HttpHeaders& headers = {});
+HttpResponse Http_Delete(const std::string& url, const HttpHeaders& headers = {});

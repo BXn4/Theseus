@@ -1,7 +1,7 @@
 // milkdrop_window.h
 //
-// Phase 1 of the milkdrop integration. Owns a second SDL window + its own
-// GL context + a libprojectM instance. The PCM ring buffer that the
+// Milkdrop visualizer window. Owns a second SDL window + its own GL
+// context + a libprojectM instance. The PCM ring buffer that the
 // dashboard already feeds (Mix_SetPostMix -> DashAudio_GetPCMSamples) is
 // what we hand to projectM each frame. Audio output is unchanged - same
 // SDL_mixer stream to the same speakers, we just visualize alongside.
@@ -27,8 +27,6 @@ void         MilkdropWindow_ToggleFullscreen();
 // invalid (window closed, bgfx not ready, or build has no projectM).
 // The scene side casts back to bgfx::TextureHandle{idx}.
 unsigned short MilkdropWindow_GetBgfxTexId();
-int            MilkdropWindow_GetTexW();
-int            MilkdropWindow_GetTexH();
 
 // Raw RGBA readback for code paths that already have a CPU buffer to fill
 // (CDynamicTexture's LockRect). Returns NULL when no live render is up.
