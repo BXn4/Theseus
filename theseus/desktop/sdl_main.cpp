@@ -1,6 +1,6 @@
-// sdl_main.cpp: desktop entry point. Creates an SDL window with an
-// OpenGL 3.2 Core context, hands off to dashinit / dashapp, and
-// runs the main loop. Counterpart to xbox/main.cpp.
+// sdl_main.cpp: desktop entry point. Creates the SDL window, brings up
+// bgfx, hands off to dashinit / dashapp, and runs the main loop.
+// Counterpart to xbox/main.cpp.
 
 #include "std.h"
 #include "dashapp.h"
@@ -11,6 +11,7 @@
 #include "audio_sdl.h"
 #include "joystick.h"
 #include "milkdrop_window.h"
+#include "xcloud_client.h"
 #include "xiso.h"
 #include "hdd_browser.h"
 #include "title_maker.h"
@@ -25,7 +26,6 @@
 #include "launch.h"
 #include <signal.h>
 
-#ifdef THESEUS_USE_BGFX
 #include <SDL_syswm.h>
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
@@ -64,7 +64,6 @@ bgfx::ShaderHandle theseus_bgfx_load_shader(const char* name)
 	bgfx::setName(sh, name);
 	return sh;
 }
-#endif
 #ifdef __APPLE__
 #include <mach-o/dyld.h>  // _NSGetExecutablePath
 #endif
@@ -155,7 +154,7 @@ volatile DWORD g_hangStartTime = 0;
 // Dear ImGui
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
-#include "imgui_impl_opengl3.h"
+#include "imgui_impl_bgfx.h"
 #include "imfilebrowser.h"
 #include "embedded_assets.h"
 
@@ -195,27 +194,22 @@ SDL_Window*   g_pSDLWindow = NULL;
 SDL_GLContext  g_pGLContext = NULL;
 GLState        g_gl = {};
 
-#ifdef THESEUS_USE_BGFX
-// Phase 2 / chunk 5a: linked FF emulator program, used by the shim's
-// shadow-submit path. Stays BGFX_INVALID_HANDLE if the shader binaries
-// were missing at init time; the shadow path no-ops in that case.
+// Linked FF emulator program, used by the shim's shadow-submit path. Stays
+// BGFX_INVALID_HANDLE if the shader binaries were missing at init time; the
+// shadow path no-ops in that case.
 bgfx::ProgramHandle g_bgfxProgFF = BGFX_INVALID_HANDLE;
 
-// Chunk 5b: uniform handles for the FF emulator program. Mirror
-// SetupGLUniforms / vs_ff / fs_ff. Created at bgfx init time and lived
-// for the run; bgfx destroys all handles on shutdown.
+// Uniform handles for the FF emulator program (vs_ff / fs_ff). Created at
+// bgfx init; bgfx destroys all handles on shutdown.
 BgfxFFUniforms g_bgfxFF = {};
 
-// Chunk 5b: 1x1 white texture bound when the shim has no real texture
-// at a stage. Real-texture upload via IDirect3DTexture8::m_bgfxTex is
-// chunk 5c.
+// 1x1 white texture bound when the shim has no real texture at a stage.
 bgfx::TextureHandle g_bgfxWhiteTex = BGFX_INVALID_HANDLE;
 
-// Chunk 5d-3+: blit program for fullscreen textured quads (boot anim,
-// CRT post). vs_blit/fs_blit; sampler bound at slot 0 named "s_blit".
+// Blit program for fullscreen textured quads (boot anim, CRT post).
+// vs_blit/fs_blit; sampler bound at slot 0 named "s_blit".
 bgfx::ProgramHandle g_bgfxProgBlit = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle g_bgfxSamplerBlit = BGFX_INVALID_HANDLE;
-#endif
 
 // CRT post-process state. Effect params get sensible defaults; backend
 // handles are zeroed and lazy-allocated by Init / Resize on the first
@@ -231,7 +225,6 @@ struct CRTDefaults {
         g_crt.flickerAmount     = 0.2f;
         g_crt.colorBleed        = 1.0f;
         g_crt.brightness        = 1.05f;
-#ifdef THESEUS_USE_BGFX
         g_crt.fb.idx       = bgfx::kInvalidHandle;
         g_crt.colorTex.idx = bgfx::kInvalidHandle;
         g_crt.program.idx  = bgfx::kInvalidHandle;
@@ -239,7 +232,6 @@ struct CRTDefaults {
         g_crt.u_p1.idx     = bgfx::kInvalidHandle;
         g_crt.u_p2.idx     = bgfx::kInvalidHandle;
         g_crt.u_p3.idx     = bgfx::kInvalidHandle;
-#endif
     }
 } g_crtDefaults;
 static float s_crtTime = 0.0f;
@@ -247,12 +239,6 @@ static float s_crtTime = 0.0f;
 #ifdef _WIN32
 // Force discrete GPU on Optimus / switchable laptops. bgfx exports its own
 // pair, so skip under BGFX to avoid the dup-symbol link error.
-#ifndef THESEUS_USE_BGFX
-extern "C" {
-    __declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
-    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
-}
-#endif
 #endif
 
 // `--graphics-debug` dumper. Writes GPU / driver / vsync / MSAA / display info
@@ -270,34 +256,19 @@ static void DumpGraphicsInfo()
 
     write2("=== Theseus graphics debug ===\n");
 
-#ifndef THESEUS_USE_BGFX
-    snprintf(buf, sizeof(buf), "GL_VENDOR:   %s\n", (const char*)glGetString(GL_VENDOR));
-    write2(buf);
-    snprintf(buf, sizeof(buf), "GL_RENDERER: %s\n", (const char*)glGetString(GL_RENDERER));
-    write2(buf);
-    snprintf(buf, sizeof(buf), "GL_VERSION:  %s\n", (const char*)glGetString(GL_VERSION));
-    write2(buf);
-    const GLubyte* glsl = glGetString(GL_SHADING_LANGUAGE_VERSION);
-    snprintf(buf, sizeof(buf), "GLSL:        %s\n", glsl ? (const char*)glsl : "(unknown)");
-    write2(buf);
-#else
     {
         const bgfx::Caps* c = bgfx::getCaps();
         snprintf(buf, sizeof(buf), "bgfx renderer: %s\n",
                  bgfx::getRendererName(c->rendererType));
         write2(buf);
     }
-#endif
 
-    int swap = SDL_GL_GetSwapInterval();
-    snprintf(buf, sizeof(buf), "Swap interval: %d (vsync %s)\n",
-        swap, (swap == 0) ? "off" : (swap < 0 ? "adaptive" : "on"));
+    // Vsync / MSAA come from the bgfx reset flags, not a GL context.
+    extern int g_vsyncMode;
+    extern int g_msaaSamples;
+    snprintf(buf, sizeof(buf), "Vsync: %s\n", (g_vsyncMode == 2) ? "off" : "on");
     write2(buf);
-
-    int msaaBuffers = 0, msaaSamples = 0;
-    SDL_GL_GetAttribute(SDL_GL_MULTISAMPLEBUFFERS, &msaaBuffers);
-    SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &msaaSamples);
-    snprintf(buf, sizeof(buf), "MSAA: buffers=%d samples=%d\n", msaaBuffers, msaaSamples);
+    snprintf(buf, sizeof(buf), "MSAA: %dx\n", g_msaaSamples > 1 ? g_msaaSamples : 1);
     write2(buf);
 
     if (g_pSDLWindow) {
@@ -312,12 +283,6 @@ static void DumpGraphicsInfo()
         snprintf(buf, sizeof(buf), "Window size: %dx%d\n", winW, winH);
         write2(buf);
     }
-
-#if defined(_WIN32) && !defined(THESEUS_USE_BGFX)
-    snprintf(buf, sizeof(buf), "NvOptimusEnablement=%lu, AmdPowerXpressRequestHighPerformance=%d\n",
-        (unsigned long)NvOptimusEnablement, AmdPowerXpressRequestHighPerformance);
-    write2(buf);
-#endif
 
     write2("==============================\n");
 
@@ -359,9 +324,10 @@ bool g_windowFocused = true;     // SDL focus state
 static void ApplyEffectiveMute()
 {
     extern bool g_mediaFullscreen;
+    extern bool g_xcloudFullscreen;
     extern bool MilkdropWindow_IsOpen();
     bool focusLost = !g_windowFocused && !MilkdropWindow_IsOpen();
-    bool shouldMute = g_audioMuted || focusLost || g_mediaFullscreen;
+    bool shouldMute = g_audioMuted || focusLost || g_mediaFullscreen || g_xcloudFullscreen;
     if (shouldMute) DashAudio_MuteAll();
     else            DashAudio_UnmuteAll();
 }
@@ -371,7 +337,7 @@ bool g_graphicsDebug = false;
 extern double g_perfDrawMs, g_perfImguiMs, g_perfSwapMs, g_perfFrameMs, g_perfFps;
 float g_muteOverlayTimer = 0.0f; // seconds remaining to show the overlay toast
 
-// Static instance tracking for GL context reset
+// Instance lists for recreating GPU resources on device reset.
 IDirect3DTexture8* IDirect3DTexture8::s_firstTex = NULL;
 IDirect3DVertexBuffer8* IDirect3DVertexBuffer8::s_firstVB = NULL;
 IDirect3DIndexBuffer8* IDirect3DIndexBuffer8::s_firstIB = NULL;
@@ -394,6 +360,7 @@ char g_tmdbKey[128]    = "";  // TMDB v3 API key, optional
 char g_romsDir[512]    = "";  // Default ROMs/ISOs root, expanded as $ROMS_DIR in launch templates
 char g_plexToken[256]   = "";  // PIN-flow token
 char g_plexClientId[64] = "";  // UUID, stable per install
+char g_xcloudRefreshToken[2048] = "";  // MS refresh token, so xCloud login sticks
 char g_jellyfinUrl[512]      = "";
 char g_jellyfinToken[256]    = "";
 char g_jellyfinUserId[64]    = "";
@@ -417,7 +384,7 @@ extern void Keyboard_HandleKey(CKeyboard* pKb, int sdlKey);
 void LoadDesktopSettings() {
     FILE* fp = fopen("Configs/desktop.ini", "r");
     if (!fp) return;
-    char line[1024];
+    char line[4096];   // xCloud refresh tokens run long
     while (fgets(line, sizeof(line), fp)) {
         char* nl = strchr(line, '\n'); if (nl) *nl = 0;
         char* cr = strchr(line, '\r'); if (cr) *cr = 0;
@@ -495,6 +462,10 @@ void LoadDesktopSettings() {
         else if (strncmp(line, "JellyfinToken=", 14) == 0) {
             strncpy(g_jellyfinToken, line + 14, sizeof(g_jellyfinToken) - 1);
             g_jellyfinToken[sizeof(g_jellyfinToken) - 1] = 0;
+        }
+        else if (strncmp(line, "XcloudRefreshToken=", 19) == 0) {
+            strncpy(g_xcloudRefreshToken, line + 19, sizeof(g_xcloudRefreshToken) - 1);
+            g_xcloudRefreshToken[sizeof(g_xcloudRefreshToken) - 1] = 0;
         }
         else if (strncmp(line, "JellyfinUserId=", 15) == 0) {
             strncpy(g_jellyfinUserId, line + 15, sizeof(g_jellyfinUserId) - 1);
@@ -579,11 +550,7 @@ static void RereadLegacyFromDisk() {
 }
 
 void SaveDesktopSettings() {
-    // Ensure directory exists
-    struct stat st;
-    if (stat("Configs", &st) != 0) {
-        system("mkdir -p \"Configs\"");
-    }
+    Plat_MkdirP("Configs");
     RereadLegacyFromDisk();
     FILE* fp = fopen("Configs/desktop.ini", "w");
     if (!fp) return;
@@ -633,6 +600,7 @@ void SaveDesktopSettings() {
     fprintf(fp, "RomsDir=%s\n", g_romsDir);
     fprintf(fp, "PlexToken=%s\n",    g_plexToken);
     fprintf(fp, "PlexClientId=%s\n", g_plexClientId);
+    fprintf(fp, "XcloudRefreshToken=%s\n", g_xcloudRefreshToken);
     fprintf(fp, "JellyfinUrl=%s\n",      g_jellyfinUrl);
     fprintf(fp, "JellyfinToken=%s\n",    g_jellyfinToken);
     fprintf(fp, "JellyfinUserId=%s\n",   g_jellyfinUserId);
@@ -656,11 +624,7 @@ bool ImGui_WantsKeyboard() {
 
 // Stores a GLuint or bgfx::TextureHandle depending on backend.
 struct GuiTexture {
-#ifndef THESEUS_USE_BGFX
-    GLuint glHandle;
-#else
     bgfx::TextureHandle bgfxHandle;
-#endif
     int w, h;
 };
 
@@ -669,15 +633,6 @@ GuiTexture* GuiTextureCreate(int w, int h, const void* rgbaPixels) {
     GuiTexture* t = new GuiTexture();
     t->w = w;
     t->h = h;
-#ifndef THESEUS_USE_BGFX
-    glGenTextures(1, &t->glHandle);
-    glBindTexture(GL_TEXTURE_2D, t->glHandle);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaPixels);
-#else
     t->bgfxHandle = bgfx::createTexture2D(
         (uint16_t)w, (uint16_t)h, false, 1,
         bgfx::TextureFormat::RGBA8,
@@ -687,29 +642,20 @@ GuiTexture* GuiTextureCreate(int w, int h, const void* rgbaPixels) {
         delete t;
         return NULL;
     }
-#endif
     return t;
 }
 
 void GuiTextureDestroy(GuiTexture** ptex) {
     if (!ptex || !*ptex) return;
     GuiTexture* t = *ptex;
-#ifndef THESEUS_USE_BGFX
-    if (t->glHandle) glDeleteTextures(1, &t->glHandle);
-#else
     if (bgfx::isValid(t->bgfxHandle)) bgfx::destroy(t->bgfxHandle);
-#endif
     delete t;
     *ptex = NULL;
 }
 
 unsigned long long GuiTextureImId(const GuiTexture* tex) {
     if (!tex) return 0;
-#ifndef THESEUS_USE_BGFX
-    return (unsigned long long)tex->glHandle;
-#else
     return (unsigned long long)tex->bgfxHandle.idx;
-#endif
 }
 
 // Forward declarations for PreSwapOverlays
@@ -720,6 +666,9 @@ bool g_showMenuBar = true;   // toggled by F10 / View > Hide Menu Bar / --no-too
 // This runs in a single ImGui frame so all overlays (mute toast, Title Maker, selection highlight) share input.
 // Forward decls (g_mediaFullscreen lives lower; PreSwapOverlays uses it).
 extern bool g_mediaFullscreen;
+extern bool g_xcloudFullscreen;
+extern bool g_xcloudClosed;
+void RenderXcloudOverlay();
 void MediaPlayer_Update();
 void MediaUI_NoteActivity();
 bool MediaUI_OsdVisible();
@@ -732,12 +681,8 @@ static void PreSwapOverlays() {
     // Always render ImGui frame for the menu bar
     // Video renders inside CDVDPlayer::Render() during the scene graph pass
 
-#ifndef THESEUS_USE_BGFX
-    ImGui_ImplOpenGL3_NewFrame();
-#else
     extern void ImGui_ImplBgfx_NewFrame();
     ImGui_ImplBgfx_NewFrame();
-#endif
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 
@@ -753,17 +698,14 @@ static void PreSwapOverlays() {
 
     // Menu bar (toggle with F10). In fullscreen video, also auto-hide
     // alongside the OSD chrome.
-    if (g_showMenuBar && (!g_mediaFullscreen || MediaUI_OsdVisible()))
+    if (g_showMenuBar && !g_xcloudFullscreen && (!g_mediaFullscreen || MediaUI_OsdVisible()))
         RenderMainMenuBar();
 
     // Settings, About, and Shortcuts windows
     RenderSettingsWindow();
     RenderAboutWindow();
     RenderShortcutsWindow();
-
-    // Modal scan progress (blocks input while MediaDB_ScanAndCache runs).
-    extern void RenderScanProgressModal();
-    RenderScanProgressModal();
+    RenderXcloudOverlay();
 
     // Mute overlay toast
     if (needMute) {
@@ -895,19 +837,14 @@ static void PreSwapOverlays() {
     }
 
     ImGui::Render();
-#ifndef THESEUS_USE_BGFX
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-#else
     extern void ImGui_ImplBgfx_RenderDrawData(ImDrawData*);
     ImGui_ImplBgfx_RenderDrawData(ImGui::GetDrawData());
-#endif
     s_imguiHasRendered = true;
 
     // Video rendering moved before ImGui frame
 }
 
 // g_inspectorOpen is now in inspector.cpp; inspector renders as floating ImGui panel
-SDL_Window* g_pXapEditorWindow = NULL;
 int  g_msaaSamples = 4;       // 0=off, 2/4/8x MSAA (default 4x)
 bool g_msaaChangeRequested = false;
 // 0=adaptive (-1, fall back to 1), 1=on (1), 2=off (0). Default adaptive.
@@ -942,18 +879,14 @@ double g_perfSwapMs  = 0.0;
 double g_perfFrameMs = 0.0;
 double g_perfFps     = 0.0;
 
-void ApplyVsyncMode() {
-    int interval = (g_vsyncMode == 2) ? 0 : (g_vsyncMode == 1) ? 1 : -1;
-    if (SDL_GL_SetSwapInterval(interval) != 0 && interval == -1)
-        SDL_GL_SetSwapInterval(1);
-}
-
-#ifdef THESEUS_USE_BGFX
-// bgfx reset flags from g_vsyncMode + g_msaaSamples. Adaptive vsync (mode 2)
-// falls through to off; bgfx has no equivalent.
+// bgfx reset flags from g_vsyncMode + g_msaaSamples. bgfx has no adaptive
+// vsync, so only an explicit "off" (mode 2) disables it; the default and
+// "on" both vsync. Running without vsync spins the GPU flat out and paces
+// frames off the driver's mercy, which is where the tearing and stutter
+// on Windows came from.
 static uint32_t BgfxResetFlags() {
     uint32_t flags = 0;
-    if (g_vsyncMode == 1) flags |= BGFX_RESET_VSYNC;
+    if (g_vsyncMode != 2) flags |= BGFX_RESET_VSYNC;
     switch (g_msaaSamples) {
         case 2:  flags |= BGFX_RESET_MSAA_X2;  break;
         case 4:  flags |= BGFX_RESET_MSAA_X4;  break;
@@ -963,6 +896,13 @@ static uint32_t BgfxResetFlags() {
     return flags;
 }
 
+// The one place the backbuffer is resized. Every trigger (window resize,
+// display-mode change, vsync/MSAA toggle) funnels here so bgfx, the view
+// rects, and the dashboard's own projection state stay in lockstep. They
+// used to drift: a resize updated all of it, a vsync toggle only reset
+// bgfx, and a fullscreen change relied on a resize event that exclusive
+// fullscreen doesn't always send. That mismatch was the resolution and
+// fullscreen hiccup.
 static void BgfxApplyReset() {
     if (!g_pSDLWindow) return;
     int w = 0, h = 0;
@@ -973,8 +913,12 @@ static void BgfxApplyReset() {
     // ImGui lives on view 2 (sharp on top of any CRT pass on view 1).
     // bgfx skips views with no rect set, so size it to the backbuffer.
     bgfx::setViewRect(2, 0, 0, (uint16_t)w, (uint16_t)h);
+    g_pp.BackBufferWidth  = w;
+    g_pp.BackBufferHeight = h;
+    g_nViewWidth          = (float)w;
+    g_nViewHeight         = (float)h;
+    g_bProjectionDirty    = true;
 }
-#endif
 
 // Pushes g_windowResolution + g_windowMode at the SDL window. Mode change
 // drops fullscreen first (if set), resizes, then re-applies the new mode.
@@ -995,6 +939,11 @@ void ApplyDisplayMode() {
     if (g_windowMode == 1) flags = SDL_WINDOW_FULLSCREEN_DESKTOP;
     else if (g_windowMode == 2) flags = SDL_WINDOW_FULLSCREEN;
     if (flags) SDL_SetWindowFullscreen(g_pSDLWindow, flags);
+
+    // Reset here rather than waiting on SDL_WINDOWEVENT_SIZE_CHANGED, which
+    // exclusive fullscreen doesn't reliably send. A later resize event just
+    // reruns the same idempotent reset.
+    BgfxApplyReset();
 }
 bool g_scrollToSelected = false; // set true when 3D click selects a node
 // g_bWireframe lives in dashapp.cpp; converted to D3DRS_FILLMODE per frame.
@@ -1005,15 +954,135 @@ extern bool g_bWireframe;
 bool g_mediaFullscreen = false;
 char g_mediaFullscreenTitle[256] = "";
 char g_mediaFullscreenSubtitle[256] = "";
+
+// xCloud takes over the whole screen while streaming, drawn into the CRT
+// capture FBO on view 0 so the CRT post process wraps it, same as the media
+// player. When there is no video (connecting, or the stream has closed) we
+// show the Xbox wallpaper with a status line along the bottom.
+bool   g_xcloudFullscreen = false;
+bool   g_xcloudClosed     = false;   // stream ended, showing the "closed" screen
+bool   g_xcloudHasVideo   = false;   // a frame has decoded this stream
+Uint32 g_xcloudLastInputMs = 0;      // last controller activity, for the idle prompt
+
+// Single entry point for starting a stream and taking over the window. Both
+// the Settings panel and the games-grid launch route through this so the flow
+// stays identical. type is "cloud" or "home". No launch overlay, mute, or
+// window minimize: those are for real on-disk titles, not a stream.
+void Xcloud_LaunchStream(const char* type, const char* id)
+{
+    Xcloud_StartStreamSession(type ? type : "cloud", id ? id : "");
+    g_xcloudClosed    = false;
+    g_xcloudFullscreen = true;
+}
+Uint32 g_xcloudClosedAtMs  = 0;      // when the closed screen appeared (auto return timer)
+
+static const Uint32 kXcloudIdleWarnMs = 5u * 60u * 1000u;   // "are you still there?"
+static const Uint32 kXcloudClosedAutoMs = 15u * 1000u;      // closed screen auto return
+
+// Bottom of screen status text over the stream (drawn in the ImGui pass, sharp
+// on top of the CRT). Reads the stream flags; safe to call every frame.
+void RenderXcloudOverlay()
+{
+    if (!g_xcloudFullscreen) return;
+    std::string msg;
+    if (g_xcloudClosed)          msg = "Stream closed.   Press A, B or Start to return.";
+    else if (!g_xcloudHasVideo)  msg = Xcloud_StreamPhase();
+    else if (g_xcloudLastInputMs && SDL_GetTicks() - g_xcloudLastInputMs > kXcloudIdleWarnMs)
+                                 msg = "Are you still there?   Press any button to keep playing.";
+    if (msg.empty()) return;
+
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImVec2 disp = ImGui::GetIO().DisplaySize;
+    ImFont* font = ImGui::GetFont();
+    float sz = 26.0f;
+    ImVec2 ts = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, msg.c_str());
+    float x = (disp.x - ts.x) * 0.5f;
+    float y = disp.y - ts.y - 48.0f;
+    dl->AddText(font, sz, ImVec2(x + 2, y + 2), IM_COL32(0, 0, 0, 200), msg.c_str());   // shadow
+    dl->AddText(font, sz, ImVec2(x, y),         IM_COL32(255, 255, 255, 255), msg.c_str());
+}
+
+#if defined(THESEUS_HAVE_WEBRTC)
+#include "xcloud_video.h"
+#include <vector>
+
+
+// The Xbox wallpaper behind the status screens, loaded once.
+static bgfx::TextureHandle XcloudBgTexture()
+{
+    static bgfx::TextureHandle s_bg = BGFX_INVALID_HANDLE;
+    static bool s_tried = false;
+    if (s_tried) return s_bg;
+    s_tried = true;
+    int w = 0, h = 0, ch = 0;
+    unsigned char* px = stbi_load("Data/xcloud_bg.png", &w, &h, &ch, 4);
+    if (px) {
+        s_bg = bgfx::createTexture2D((uint16_t)w, (uint16_t)h, false, 1,
+            bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_BLIT_DST | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        bgfx::updateTexture2D(s_bg, 0, 0, 0, 0, (uint16_t)w, (uint16_t)h, bgfx::copy(px, (uint32_t)(w * h * 4)));
+        stbi_image_free(px);
+    }
+    return s_bg;
+}
+
+static void XcloudUI_DrawFullscreenVideo()
+{
+    static bgfx::TextureHandle s_tex = BGFX_INVALID_HANDLE;
+    static int s_tw = 0, s_th = 0;
+    static uint64_t s_seq = 0, s_gen = 0;
+    static std::vector<uint8_t> s_buf;
+
+    // New stream: drop the old texture so we do not flash the previous game.
+    uint64_t gen = Xcloud_StreamGeneration();
+    if (gen != s_gen) {
+        s_gen = gen; s_seq = 0;
+        if (bgfx::isValid(s_tex)) { bgfx::destroy(s_tex); s_tex = BGFX_INVALID_HANDLE; }
+        s_tw = s_th = 0; s_buf.clear();
+        g_xcloudHasVideo = false;
+        g_xcloudLastInputMs = 0;
+    }
+
+    int w = 0, h = 0;
+    if (XcloudVideo_GetLatest(s_buf, w, h, s_seq)) {
+        if (!bgfx::isValid(s_tex) || w != s_tw || h != s_th) {
+            if (bgfx::isValid(s_tex)) bgfx::destroy(s_tex);
+            s_tex = bgfx::createTexture2D((uint16_t)w, (uint16_t)h, false, 1,
+                bgfx::TextureFormat::BGRA8,
+                BGFX_TEXTURE_BLIT_DST | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+            s_tw = w; s_th = h;
+        }
+        if (bgfx::isValid(s_tex))
+            bgfx::updateTexture2D(s_tex, 0, 0, 0, 0, (uint16_t)w, (uint16_t)h,
+                bgfx::copy(s_buf.data(), (uint32_t)s_buf.size()));
+        g_xcloudHasVideo = true;
+    }
+
+    int dw = 1280, dh = 720;
+    if (g_pSDLWindow) SDL_GetWindowSize(g_pSDLWindow, &dw, &dh);
+    bgfx::setViewRect(0, 0, 0, (uint16_t)dw, (uint16_t)dh);
+    bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
+
+    if (!g_xcloudClosed && bgfx::isValid(s_tex) && s_tw > 0 && s_th > 0) {
+        // Live video, letterboxed.
+        float qw, qh;
+        Bgfx_AspectFitNDC(s_tw, s_th, dw, dh, qw, qh);
+        Bgfx_BlitTexturedQuad(s_tex, qw, qh);
+    } else {
+        // Connecting, or the stream closed: wallpaper fills the screen; the
+        // status line is drawn on top by RenderXcloudOverlay.
+        bgfx::TextureHandle bg = XcloudBgTexture();
+        if (bgfx::isValid(bg)) Bgfx_BlitTexturedQuad(bg, 1.f, 1.f);
+        else                   bgfx::touch(0);
+    }
+}
+#else
+static void XcloudUI_DrawFullscreenVideo() {}
+#endif
 // Latched pulse: media_ui::MediaUI_StopFullscreen sets this when user leaves
 // playback. CMediaCollection::ConsumePlaybackExited reads-and-clears it.
 int g_mediaPlaybackExited = 0;
 
 // g_xapEditorOpen is now in xap_editor.cpp
-
-// XAP Editor; now a floating ImGui window, no separate SDL window needed
-void CreateXapEditorWindow() { /* no-op: editor is an ImGui panel now */ }
-void DestroyXapEditorWindow() { /* no-op */ }
 
 // g_extractedMode and inline editing state are now in xap_editor.cpp
 
@@ -1198,20 +1267,14 @@ int main(int argc, char* argv[]) {
     Plex_StartSync();
     extern void Jellyfin_StartSync();
     Jellyfin_StartSync();
+    // If signed into xCloud, fold the account's games + consoles into the
+    // games grid (injected live, never written to games.ini).
+    extern void XcloudVGames_Sync();
+    XcloudVGames_Sync();
 
-    // GL build wraps an OpenGL drawable into the window. BGFX leaves it
-    // plain so the backend layer (CAMetalLayer / Vulkan) can attach.
+    // Plain window: bgfx attaches its own backend layer (CAMetalLayer on
+    // macOS, Vulkan/D3D11 elsewhere), so no GL drawable flag.
     Uint32 windowFlags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
-#ifndef THESEUS_USE_BGFX
-    windowFlags |= SDL_WINDOW_OPENGL;
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, g_msaaSamples > 0 ? 1 : 0);
-    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, g_msaaSamples);
-#endif
 
     g_pSDLWindow = SDL_CreateWindow(
         "UIX Desktop - Preview",
@@ -1219,35 +1282,6 @@ int main(int argc, char* argv[]) {
         1280, 720,
         windowFlags
     );
-
-#ifndef THESEUS_USE_BGFX
-    if (!g_pSDLWindow) {
-        // Fallback 1: drop MSAA but keep GL 3.2 core + double buffer
-        fprintf(stderr, "SDL_CreateWindow failed (%s), retrying without MSAA...\n", SDL_GetError());
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
-        g_pSDLWindow = SDL_CreateWindow(
-            "UIX Desktop - Preview",
-            SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-            1280, 720,
-            windowFlags
-        );
-    }
-
-    if (!g_pSDLWindow) {
-        // Fallback 2: drop to GL 3.0 compatibility profile (Xvfb / software renderers)
-        fprintf(stderr, "SDL_CreateWindow failed (%s), retrying with compatibility profile...\n", SDL_GetError());
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-        g_pSDLWindow = SDL_CreateWindow(
-            "UIX Desktop - Preview",
-            SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-            1280, 720,
-            windowFlags
-        );
-    }
-#endif
 
     if (!g_pSDLWindow) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -1270,20 +1304,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-#ifndef THESEUS_USE_BGFX
-    // Create OpenGL context
-    g_pGLContext = SDL_GL_CreateContext(g_pSDLWindow);
-    if (!g_pGLContext) {
-        fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
-        SDL_DestroyWindow(g_pSDLWindow);
-        SDL_Quit();
-        return 1;
-    }
-
-    ApplyVsyncMode();
-#endif
-
-#ifdef THESEUS_USE_BGFX
     // bgfx::init. nwh = NSWindow* on macOS, HWND on Win32, Window on X11.
     {
         SDL_SysWMinfo wmi;
@@ -1376,8 +1396,8 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // View 0 viewport. Required for shadow-submit (chunk 5a)
-                // to be a valid draw; bgfx skips submits to a view with
+                // View 0 viewport. Required for the shadow-submit to be a
+                // valid draw; bgfx skips submits to a view with
                 // no rect. ApplyBgfxResize bumps these to window size as
                 // soon as we have one; placeholders here for the first
                 // frame.
@@ -1394,8 +1414,8 @@ int main(int argc, char* argv[]) {
                 // that overlays. Force Sequential to match GL.
                 bgfx::setViewMode(0, bgfx::ViewMode::Sequential);
 
-                // Chunk 5b: create FF uniform + sampler handles. Names
-                // must match the .sc shader sources exactly.
+                // Create FF uniform + sampler handles. Names must match the
+                // .sc shader sources exactly.
                 g_bgfxFF.u_FfWVP          = bgfx::createUniform("u_FfWVP",          bgfx::UniformType::Mat4);
                 g_bgfxFF.u_FfWorldView    = bgfx::createUniform("u_FfWorldView",    bgfx::UniformType::Mat4);
                 g_bgfxFF.u_FfNormalInv    = bgfx::createUniform("u_FfNormalInv",    bgfx::UniformType::Mat4);
@@ -1429,50 +1449,10 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-#endif
 
-    fprintf(stdout, "UIX Desktop - SDL/OpenGL Preview Tool\n");
-#ifndef THESEUS_USE_BGFX
-    fprintf(stdout, "OpenGL: %s\n", glGetString(GL_VERSION));
-    fprintf(stdout, "Renderer: %s\n", glGetString(GL_RENDERER));
-#endif
+    fprintf(stdout, "UIX Desktop Preview Tool\n");
     fprintf(stdout, "F1: Toggle Debug Tools | F2: XAP Editor | F10: Toggle Menu Bar\n");
     fflush(stdout); fflush(stderr);
-
-#if defined(_WIN32) && !defined(THESEUS_USE_BGFX)
-    // Initialize GLEW (must be called after GL context creation, before any GL calls)
-    glewExperimental = GL_TRUE;
-    GLenum glewErr = glewInit();
-    if (glewErr != GLEW_OK) {
-        fprintf(stderr, "glewInit() failed: %s\n", glewGetErrorString(glewErr));
-        SDL_GL_DeleteContext(g_pGLContext);
-        SDL_DestroyWindow(g_pSDLWindow);
-        SDL_Quit();
-        return 1;
-    }
-    // Clear any GL error set by glewInit (common with core profile)
-    glGetError();
-#endif
-
-#ifndef THESEUS_USE_BGFX
-    // Enable MSAA
-    glEnable(GL_MULTISAMPLE);
-
-    // Set viewport for 3D rendering (left portion only)
-    glViewport(0, 0, 1280, 720);
-
-    // Initialize shaders and GL state
-    if (!InitGLShaders()) {
-        fprintf(stderr, "InitGLShaders() failed!\n");
-        SDL_GL_DeleteContext(g_pGLContext);
-        SDL_DestroyWindow(g_pSDLWindow);
-        SDL_Quit();
-        return 1;
-    }
-
-    // Initialize CRT post-process shader
-    InitCRTShader(1280, 720);
-#endif
 
     // Initialize Dear ImGui
     IMGUI_CHECKVERSION();
@@ -1547,10 +1527,6 @@ int main(int argc, char* argv[]) {
     style.WindowPadding     = ImVec2(12, 10);
     style.IndentSpacing     = 18.0f;
 
-#ifndef THESEUS_USE_BGFX
-    ImGui_ImplSDL2_InitForOpenGL(g_pSDLWindow, g_pGLContext);
-    ImGui_ImplOpenGL3_Init("#version 150");
-#else
     // SDL2 feeds events / DPI; no GL context under BGFX.
     ImGui_ImplSDL2_InitForOther(g_pSDLWindow);
     {
@@ -1564,7 +1540,6 @@ int main(int argc, char* argv[]) {
         if (!ImGui_ImplBgfx_Init(2))
             fprintf(stderr, "ImGui_ImplBgfx_Init failed!\n");
     }
-#endif
 
     // Check for CLI flags
     float cliUiScale = 0.0f; // 0 = unset, default 1.0 if not specified
@@ -1629,17 +1604,10 @@ int main(int argc, char* argv[]) {
     if (!InitApp()) {
         fprintf(stderr, "InitApp() failed!\n");
         CleanupApp();
-#ifndef THESEUS_USE_BGFX
-        ImGui_ImplOpenGL3_Shutdown();
-#else
         extern void ImGui_ImplBgfx_Shutdown();
         ImGui_ImplBgfx_Shutdown();
-#endif
         ImGui_ImplSDL2_Shutdown();
         ImGui::DestroyContext();
-#ifndef THESEUS_USE_BGFX
-        SDL_GL_DeleteContext(g_pGLContext);
-#endif
         SDL_DestroyWindow(g_pSDLWindow);
         SDL_Quit();
         return 1;
@@ -1696,21 +1664,8 @@ int main(int argc, char* argv[]) {
                 case SDL_WINDOWEVENT:
                     if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
                         Uint32 mainWinID = SDL_GetWindowID(g_pSDLWindow);
-                        if (event.window.windowID == mainWinID) {
-                            int w = event.window.data1, h = event.window.data2;
-#ifndef THESEUS_USE_BGFX
-                            glViewport(0, 0, w, h);
-#else
-                            bgfx::reset((uint32_t)w, (uint32_t)h, BgfxResetFlags());
-                            bgfx::setViewRect(0, 0, 0, (uint16_t)w, (uint16_t)h);
-                            bgfx::setViewRect(2, 0, 0, (uint16_t)w, (uint16_t)h);
-#endif
-                            g_pp.BackBufferWidth = w;
-                            g_pp.BackBufferHeight = h;
-                            g_nViewWidth = (float)w;
-                            g_nViewHeight = (float)h;
-                            g_bProjectionDirty = true;
-                        }
+                        if (event.window.windowID == mainWinID)
+                            BgfxApplyReset();
                     }
                     if (event.window.event == SDL_WINDOWEVENT_CLOSE) {
                         Uint32 evWinID = event.window.windowID;
@@ -1785,6 +1740,17 @@ int main(int argc, char* argv[]) {
                         Keyboard_InsertText(g_pActiveKeyboard, event.text.text);
                     break;
                 case SDL_KEYDOWN:
+                    // Esc / Q / Backspace quits the xCloud stream and drops
+                    // back to the dashboard.
+                    if (g_xcloudFullscreen) {
+                        SDL_Keycode xk = event.key.keysym.sym;
+                        if (xk == SDLK_ESCAPE || xk == SDLK_q || xk == SDLK_BACKSPACE) {
+                            Xcloud_StopStreamSession();
+                            g_xcloudFullscreen = false;
+                            g_xcloudClosed = false;
+                            break;
+                        }
+                    }
                     if (g_mediaFullscreen) MediaUI_NoteActivity();
                     // Esc / Q / Backspace exits fullscreen video, before any
                     // other key handling (so it works even when keyboard is
@@ -1881,9 +1847,6 @@ int main(int argc, char* argv[]) {
                         g_inspectorOpen = g_debugMode;
                         if (!g_debugMode && g_bWireframe) {
                             g_bWireframe = false;
-#ifndef THESEUS_USE_BGFX
-                            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-#endif
                         }
                         if (g_pD3DDev) {
                             g_pD3DDev->m_inspectorEnabled = g_debugMode;
@@ -1956,18 +1919,64 @@ int main(int argc, char* argv[]) {
         // controller input doesn't drift around the menu (joystick polling
         // still runs globally), and so animations/timers don't fast-forward
         // when the user comes back. media_ui handles its own input.
-        if (!g_mediaFullscreen) Advance();
+        // xCloud fullscreen lifecycle: stream, then closed screen, then dashboard.
+        if (g_xcloudFullscreen) {
+            bool running = Xcloud_StreamRunning();
 
-#ifndef THESEUS_USE_BGFX
-        // CRT: render to FBO if enabled
-        if (g_crt.enabled && g_crt.fbo) {
-            int ww, wh;
-            SDL_GL_GetDrawableSize(g_pSDLWindow, &ww, &wh);
-            CRT_ResizeFBO(ww, wh);
-            CRT_BeginCapture();
-            glViewport(0, 0, ww, wh);
+            // Session ended (in game exit, timeout, drop): hold on the closed
+            // screen for a moment instead of snapping straight to the dashboard.
+            if (!running && !g_xcloudClosed) { g_xcloudClosed = true; g_xcloudClosedAtMs = SDL_GetTicks(); }
+
+            if (g_xcloudClosed) {
+                bool leave = (SDL_GetTicks() - g_xcloudClosedAtMs > kXcloudClosedAutoMs);
+                if (CJoystick::c_controller) {
+                    SDL_GameController* gc = CJoystick::c_controller;
+                    if (SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_A) ||
+                        SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_B) ||
+                        SDL_GameControllerGetButton(gc, SDL_CONTROLLER_BUTTON_START)) leave = true;
+                }
+                if (leave) { g_xcloudFullscreen = false; g_xcloudClosed = false; }
+            } else if (CJoystick::c_controller) {
+                // Streaming: the controller belongs to the game. SDL already
+                // normalizes any pad to the Xbox layout.
+                SDL_GameController* gc = CJoystick::c_controller;
+                auto btn = [gc](SDL_GameControllerButton x){ return SDL_GameControllerGetButton(gc, x) != 0; };
+                auto ax  = [gc](SDL_GameControllerAxis x){ return SDL_GameControllerGetAxis(gc, x) / 32767.0f; };
+                XcloudGamepad gp{};
+                gp.a = btn(SDL_CONTROLLER_BUTTON_A);            gp.b = btn(SDL_CONTROLLER_BUTTON_B);
+                gp.x = btn(SDL_CONTROLLER_BUTTON_X);            gp.y = btn(SDL_CONTROLLER_BUTTON_Y);
+                gp.up = btn(SDL_CONTROLLER_BUTTON_DPAD_UP);     gp.down = btn(SDL_CONTROLLER_BUTTON_DPAD_DOWN);
+                gp.left = btn(SDL_CONTROLLER_BUTTON_DPAD_LEFT); gp.right = btn(SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
+                gp.lb = btn(SDL_CONTROLLER_BUTTON_LEFTSHOULDER);gp.rb = btn(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
+                gp.ls = btn(SDL_CONTROLLER_BUTTON_LEFTSTICK);   gp.rs = btn(SDL_CONTROLLER_BUTTON_RIGHTSTICK);
+                gp.view = btn(SDL_CONTROLLER_BUTTON_BACK);      gp.menu = btn(SDL_CONTROLLER_BUTTON_START);
+                gp.nexus = btn(SDL_CONTROLLER_BUTTON_GUIDE);
+                gp.lx = ax(SDL_CONTROLLER_AXIS_LEFTX);  gp.ly = ax(SDL_CONTROLLER_AXIS_LEFTY);
+                gp.rx = ax(SDL_CONTROLLER_AXIS_RIGHTX); gp.ry = ax(SDL_CONTROLLER_AXIS_RIGHTY);
+                gp.lt = ax(SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+                gp.rt = ax(SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+                Xcloud_SendGamepad(gp);
+
+                // Idle tracking for the "are you still there?" prompt.
+                bool active = gp.a||gp.b||gp.x||gp.y||gp.up||gp.down||gp.left||gp.right||
+                              gp.lb||gp.rb||gp.ls||gp.rs||gp.view||gp.menu||gp.nexus ||
+                              fabsf(gp.lx)>0.3f||fabsf(gp.ly)>0.3f||fabsf(gp.rx)>0.3f||fabsf(gp.ry)>0.3f||
+                              gp.lt>0.2f||gp.rt>0.2f;
+                if (active || g_xcloudLastInputMs == 0) g_xcloudLastInputMs = SDL_GetTicks();
+            }
+        } else if (g_xcloudClosed) {
+            g_xcloudClosed = false;   // safety: never linger closed outside fullscreen
         }
-#else
+
+        // Mute the dashboard while the stream owns the screen, unmute on exit.
+        static bool s_prevXcloudFs = false;
+        if (g_xcloudFullscreen != s_prevXcloudFs) {
+            s_prevXcloudFs = g_xcloudFullscreen;
+            ApplyEffectiveMute();
+        }
+
+        if (!g_mediaFullscreen && !g_xcloudFullscreen) Advance();
+
         // Same idea under bgfx: allocate / resize the offscreen FB to
         // window size, point view 0 at it so the scene draws there
         // instead of straight to the backbuffer. Always set view 0's
@@ -1981,13 +1990,14 @@ int main(int argc, char* argv[]) {
         } else {
             CRT_PointViewToBackbuffer_Bgfx();
         }
-#endif
 
         // Render 3D scene (viewport set to left portion; Present() skips swap when inspector is open)
         Uint64 tDraw0 = SDL_GetPerformanceCounter();
         if (g_mediaFullscreen) {
             extern void MediaUI_DrawFullscreenVideo();
             MediaUI_DrawFullscreenVideo();
+        } else if (g_xcloudFullscreen) {
+            XcloudUI_DrawFullscreenVideo();
         } else {
             Draw();
         }
@@ -1999,18 +2009,10 @@ int main(int argc, char* argv[]) {
         if (g_bWireframe && g_pD3DDev)
             TheseusSetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
 
-#ifndef THESEUS_USE_BGFX
-        // CRT: blit with post-process shader
-        if (g_crt.enabled && g_crt.fbo) {
-            s_crtTime += 0.016f;
-            CRT_EndAndBlit(s_crtTime);
-        }
-#else
         if (g_crt.enabled && bgfx::isValid(g_crt.program) && bgfx::isValid(g_crt.fb)) {
             s_crtTime += 0.016f;
             CRT_EndAndBlit_Bgfx(s_crtTime, g_crt.texW, g_crt.texH);
         }
-#endif
 
         // Overlays (menu bar, inspector, Title Maker, etc.); always render
         Uint64 tImgui0 = SDL_GetPerformanceCounter();
@@ -2055,16 +2057,15 @@ int main(int argc, char* argv[]) {
 
         MilkdropWindow_Tick();
 
+        // Drive the xCloud->VGDB injection state machine (main-thread only).
+        extern void XcloudVGames_Tick();
+        XcloudVGames_Tick();
+
         // Swap
         Uint64 tSwap0 = SDL_GetPerformanceCounter();
-#ifndef THESEUS_USE_BGFX
-        if (g_pSDLWindow) SDL_GL_SwapWindow(g_pSDLWindow);
-#else
-        // Chunk 5d-2: bgfx now owns presentation. There is no GL
-        // drawable on the window so SDL_GL_SwapWindow is gone; bgfx's
-        // Metal layer becomes the visible contentView.
+        // bgfx owns presentation; its backend layer is the visible surface.
+        // No GL drawable, so no SDL_GL_SwapWindow.
         bgfx::frame();
-#endif
         Uint64 tSwap1 = SDL_GetPerformanceCounter();
 
         if (g_graphicsDebug) {
@@ -2093,11 +2094,7 @@ int main(int argc, char* argv[]) {
 
         if (g_vsyncChangeRequested) {
             g_vsyncChangeRequested = false;
-#ifndef THESEUS_USE_BGFX
-            ApplyVsyncMode();
-#else
             BgfxApplyReset();
-#endif
         }
 
         if (g_displayChangeRequested) {
@@ -2109,91 +2106,29 @@ int main(int argc, char* argv[]) {
         // context with new sample count (heavy: reloads shaders, re-
         // uploads textures). bgfx path is a single bgfx::reset call;
         // bgfx keeps all GPU resources alive across the reset.
-#ifndef THESEUS_USE_BGFX
-        if (g_msaaChangeRequested) {
-            g_msaaChangeRequested = false;
-
-            // Shutdown ImGui GL backend (uses old context)
-            ImGui_ImplOpenGL3_Shutdown();
-
-            // Destroy old GL context
-            SDL_GL_DeleteContext(g_pGLContext);
-
-            // Set new MSAA attributes
-            if (g_msaaSamples > 0) {
-                SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
-                SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, g_msaaSamples);
-            } else {
-                SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
-                SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
-            }
-
-            // Create new GL context on the same window
-            g_pGLContext = SDL_GL_CreateContext(g_pSDLWindow);
-            if (!g_pGLContext) {
-                fprintf(stderr, "[MSAA] Failed to create new GL context! Falling back...\n");
-                SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
-                SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
-                g_pGLContext = SDL_GL_CreateContext(g_pSDLWindow);
-                g_msaaSamples = 0;
-            }
-            ApplyVsyncMode();
-
-            // Enable/disable MSAA
-            if (g_msaaSamples > 0) glEnable(GL_MULTISAMPLE);
-            else glDisable(GL_MULTISAMPLE);
-
-            // Reinit shaders and GL state
-            memset(&g_gl, 0, sizeof(g_gl));
-            InitGLShaders();
-            InitCRTShader(1280, 720);
-
-            // Re-upload all textures and buffers from CPU memory
-            ReuploadAllGLResources();
-
-            // Reinit ImGui GL backend
-            ImGui_ImplOpenGL3_Init("#version 150");
-
-            // Restore viewport (full main window; inspector is separate)
-            int winW, winH;
-            SDL_GetWindowSize(g_pSDLWindow, &winW, &winH);
-            glViewport(0, 0, winW, winH);
-
-        }
-#else
         // bgfx::reset keeps all resources alive; MSAA toggle is one call.
         if (g_msaaChangeRequested) {
             g_msaaChangeRequested = false;
             BgfxApplyReset();
         }
-#endif
     }
 
     // Cleanup
-    DestroyXapEditorWindow();
     XapEditor_Cleanup();
-#ifndef THESEUS_USE_BGFX
-    ImGui_ImplOpenGL3_Shutdown();
-#else
     {
         extern void ImGui_ImplBgfx_Shutdown();
         ImGui_ImplBgfx_Shutdown();
     }
-#endif
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
 
     MilkdropWindow_Shutdown();
     CleanupApp();
-#ifndef THESEUS_USE_BGFX
-    SDL_GL_DeleteContext(g_pGLContext);
-#else
     // Intentionally NOT calling bgfx::shutdown() here. Several static
     // CXipFile / CMesh / CTexture instances have destructors that run
     // AFTER main returns and call bgfx::destroy on their handles; if
     // shutdown ran first those destroys segfault on a dead context.
     // The OS reclaims everything at process exit.
-#endif
     SDL_DestroyWindow(g_pSDLWindow);
     SDL_Quit();
 

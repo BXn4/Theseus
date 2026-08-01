@@ -67,9 +67,12 @@ extern TCHAR g_szLastLoadedSkin[MAX_PATH];
 
 // Color introspection / live edit for the Skin Editor. Returns 1 or 2 colors
 // per material (or 0 for types without editable colors). D3DCOLOR is ARGB.
+// Desktop only; the dashboard never edits materials at runtime.
+#ifndef _XBOX
 int      MatInfo_ColorCount(CMatInfo* p);
 DWORD    MatInfo_GetColor(CMatInfo* p, int idx);
 void     MatInfo_SetColor(CMatInfo* p, int idx, DWORD c);
+#endif
 
 class CObject;
 class CClass;

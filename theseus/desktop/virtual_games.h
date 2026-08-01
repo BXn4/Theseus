@@ -1,6 +1,6 @@
-// virtual_games.h: virtual game library. Serves game entries from
-// games.ini without needing real folder structures; the dashboard
-// sees virtual folders, XBEs, and icons. Desktop-only.
+// Virtual game library. Serves game entries straight from games.ini with no
+// real folders, so the dashboard sees virtual folders, XBEs, and icons.
+// Desktop only.
 
 #pragma once
 
@@ -10,16 +10,18 @@
 #include <sys/stat.h>
 #include "xboxfs_drive.h"
 
-#define VGAMES_MAX 512
+// Roomy enough for a full local library plus a signed-in xCloud/Game Pass
+// account injected at boot (see xcloud_vgames.cpp).
+#define VGAMES_MAX 2048
 #define VGAMES_INI "Configs/games.ini"
 #define VGAMES_ICONS "Configs/icons"
 
 struct VirtualGame {
-    char name[128];        // Display name / virtual folder name
-    char titleID[16];      // Hex title ID (e.g. "45410013")
-    char launch[512];      // Launch command
-    char drive[4];         // Drive letter ("E", "F", "G")
-    char category[32];     // "Games", "Applications", "Homebrew", etc.
+    char name[128];        // display name and virtual folder name
+    char titleID[16];      // hex title id, e.g. "45410013"
+    char launch[512];
+    char drive[4];         // "E", "F", "G"
+    char category[32];     // "Games", "Applications", "Homebrew", ...
     bool valid;
 };
 
@@ -27,16 +29,20 @@ struct VirtualGameDB {
     VirtualGame games[VGAMES_MAX];
     int count;
     bool loaded;
-    // Bumps on every mutation. Consumers (eg CGamesCollection) cache filtered
-    // slices keyed on this so they auto-refresh when games.ini changes without
-    // anyone having to call Refresh().
+    // Bumps on every mutation so consumers can cache filtered slices keyed on
+    // it and auto refresh when games.ini changes.
     unsigned int generation;
 };
 
-// Global database
 extern VirtualGameDB g_vgames;
 
-// Load games.ini into memory
+// A live streaming entry (xCloud / remote play), injected at boot from a
+// signed-in account and never written to games.ini. Identified by its launch
+// scheme so no extra field is needed.
+inline bool VGames_IsStreaming(const VirtualGame& g) {
+    return strncmp(g.launch, "xcloud://", 9) == 0 || strncmp(g.launch, "xhome://", 8) == 0;
+}
+
 inline void VGames_Load() {
     if (g_vgames.loaded) return;
     g_vgames.loaded = true;
@@ -49,15 +55,11 @@ inline void VGames_Load() {
     VirtualGame* cur = NULL;
 
     while (fgets(line, sizeof(line), fp)) {
-        // Strip newline/carriage return
         char* nl = strchr(line, '\n'); if (nl) *nl = 0;
         char* cr = strchr(line, '\r'); if (cr) *cr = 0;
-
-        // Skip empty lines
         if (line[0] == 0) continue;
 
-        // Section header. strrchr so ROM tags like [!] inside the name
-        // don't get truncated at the first ].
+        // strrchr so ROM tags like [!] inside the name survive.
         if (line[0] == '[') {
             char* end = strrchr(line, ']');
             if (end && g_vgames.count < VGAMES_MAX) {
@@ -65,7 +67,7 @@ inline void VGames_Load() {
                 memset(cur, 0, sizeof(*cur));
                 *end = 0;
                 strncpy(cur->name, line + 1, sizeof(cur->name) - 1);
-                strcpy(cur->drive, "E");       // defaults
+                strcpy(cur->drive, "E");
                 strcpy(cur->category, "Games");
                 cur->valid = true;
                 g_vgames.count++;
@@ -75,7 +77,6 @@ inline void VGames_Load() {
 
         if (!cur) continue;
 
-        // Key=Value pairs
         char* eq = strchr(line, '=');
         if (!eq) continue;
         *eq = 0;
@@ -97,20 +98,14 @@ inline void VGames_Load() {
             g_vgames.count, g_vgames.generation);
 }
 
-// Reload (force re-read of games.ini)
 inline void VGames_Reload() {
     g_vgames.loaded = false;
     g_vgames.count = 0;
     VGames_Load();
 }
 
-// Save current database back to games.ini
 inline void VGames_Save() {
-    // Ensure directory exists
-    struct stat st;
-    if (stat("Configs", &st) != 0) {
-        system("mkdir -p \"Configs\"");
-    }
+    Plat_MkdirP("Configs");
 
     FILE* fp = fopen(VGAMES_INI, "w");
     if (!fp) return;
@@ -118,6 +113,7 @@ inline void VGames_Save() {
     for (int i = 0; i < g_vgames.count; i++) {
         VirtualGame& g = g_vgames.games[i];
         if (!g.valid) continue;
+        if (VGames_IsStreaming(g)) continue;   // xCloud/remote-play entries are live, never persisted
         fprintf(fp, "[%s]\n", g.name);
         fprintf(fp, "TitleID=%s\n", g.titleID);
         fprintf(fp, "Launch=%s\n", g.launch);
@@ -128,7 +124,6 @@ inline void VGames_Save() {
     fclose(fp);
 }
 
-// Add a new game entry
 inline int VGames_Add(const char* name, const char* titleID, const char* launch,
                        const char* drive, const char* category) {
     VGames_Load();
@@ -146,7 +141,6 @@ inline int VGames_Add(const char* name, const char* titleID, const char* launch,
     return g_vgames.count++;
 }
 
-// Update an existing game entry in-place
 inline void VGames_Update(int idx, const char* name, const char* titleID,
                            const char* launch, const char* drive, const char* category) {
     if (idx < 0 || idx >= g_vgames.count) return;
@@ -159,7 +153,6 @@ inline void VGames_Update(int idx, const char* name, const char* titleID,
     g_vgames.generation++;
 }
 
-// Find a game by name (returns index, or -1)
 inline int VGames_FindByName(const char* name) {
     VGames_Load();
     for (int i = 0; i < g_vgames.count; i++) {
@@ -169,26 +162,23 @@ inline int VGames_FindByName(const char* name) {
     return -1;
 }
 
-// Delete a virtual game by name: removes from games.ini and deletes icon file
 inline void VGames_DeleteByName(const char* name) {
     VGames_Load();
     int idx = VGames_FindByName(name);
     if (idx < 0) return;
 
-    // Delete icon file
     char iconPath[512];
     snprintf(iconPath, sizeof(iconPath), "Configs/icons/%s.jpg", g_vgames.games[idx].titleID);
     remove(iconPath);
 
-    // Mark as invalid
     g_vgames.games[idx].valid = false;
     g_vgames.generation++;
 
-    // Rewrite games.ini without this entry
     FILE* fp = fopen("Configs/games.ini", "w");
     if (fp) {
         for (int i = 0; i < g_vgames.count; i++) {
             if (!g_vgames.games[i].valid) continue;
+            if (VGames_IsStreaming(g_vgames.games[i])) continue;
             fprintf(fp, "[%s]\n", g_vgames.games[i].name);
             fprintf(fp, "TitleID=%s\n", g_vgames.games[i].titleID);
             fprintf(fp, "Launch=%s\n", g_vgames.games[i].launch);
@@ -202,26 +192,22 @@ inline void VGames_DeleteByName(const char* name) {
     fprintf(stderr, "[VGames] Deleted: %s\n", name);
 }
 
-// Check if a path matches a virtual game folder
-// e.g. "Library/Games/The Simpsons Road Rage" → returns game index or -1
+// Match a disk path like "Library/Games/Road Rage" to a game index, or -1.
 inline int VGames_MatchFolder(const char* localPath) {
     VGames_Load();
-    // Normalize: collapse double slashes and strip trailing slash
     char norm[512];
     int j = 0;
     for (int k = 0; localPath[k] && j < 510; k++) {
-        if (localPath[k] == '/' && j > 0 && norm[j-1] == '/') continue; // skip double slash
+        if (localPath[k] == '/' && j > 0 && norm[j-1] == '/') continue;
         norm[j++] = localPath[k];
     }
-    if (j > 0 && norm[j-1] == '/') j--; // strip trailing slash
+    if (j > 0 && norm[j-1] == '/') j--;
     norm[j] = 0;
 
     for (int i = 0; i < g_vgames.count; i++) {
         if (!g_vgames.games[i].valid) continue;
-        // Virtual games store their Xbox drive letter ("E", typically), but
-        // on desktop they live under Library/{category}/{name}. Build the
-        // expected disk path that way -- F/G/R never reach this code path
-        // since those drives have no analog on desktop.
+        // Games carry an Xbox drive letter but live under prefix/category/name
+        // on desktop. F/G/R never reach here since they have no analog.
         const char* prefix = (g_vgames.games[i].drive[0])
             ? XboxFS_DriveToPrefix(g_vgames.games[i].drive[0]) : 0;
         if (!prefix) continue;
@@ -234,8 +220,8 @@ inline int VGames_MatchFolder(const char* localPath) {
     return -1;
 }
 
-// Parse "Library/Games" / "Data/Apps" etc. into drive + category. Used
-// by both the Win32 and POSIX FindFirstFile shims.
+// Split a dir like "Library/Games" into drive + category. Used by both
+// FindFirstFile shims.
 inline bool VGames_ParseDir(const char* dirPath, char* outDrive, char* outCat, size_t catLen) {
     if (!dirPath || !outDrive || !outCat || catLen < 2) return false;
     static const struct { const char* prefix; char drive; } kMap[] = {
@@ -267,8 +253,6 @@ inline bool VGames_ParseDir(const char* dirPath, char* outDrive, char* outCat, s
     return false;
 }
 
-// Get virtual games that belong to a specific drive+category directory
-// Used by FindFirstFile/FindNextFile to inject virtual entries
 inline int VGames_GetForDirectory(const char* drive, const char* category,
                                    int* outIndices, int maxOut) {
     VGames_Load();
@@ -283,7 +267,6 @@ inline int VGames_GetForDirectory(const char* drive, const char* category,
     return count;
 }
 
-// Get the icon path for a virtual game (local filesystem path)
 inline const char* VGames_GetIconPath(int idx) {
     static char s_iconBuf[512];
     if (idx < 0 || idx >= g_vgames.count) return NULL;
@@ -291,14 +274,12 @@ inline const char* VGames_GetIconPath(int idx) {
     struct stat st;
     if (stat(s_iconBuf, &st) == 0)
         return s_iconBuf;
-    // Try png
     snprintf(s_iconBuf, sizeof(s_iconBuf), "%s/%s.png", VGAMES_ICONS, g_vgames.games[idx].titleID);
     if (stat(s_iconBuf, &st) == 0)
         return s_iconBuf;
     return NULL;
 }
 
-// Generate a virtual .uixshortcut content for a game
 inline int VGames_MakeShortcutContent(int idx, char* buf, int bufSize) {
     if (idx < 0 || idx >= g_vgames.count) return 0;
     VirtualGame& g = g_vgames.games[idx];

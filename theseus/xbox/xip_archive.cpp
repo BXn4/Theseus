@@ -7,7 +7,6 @@
 #include "file_util.h"
 #include "xip_archive.h"
 #include "asset_loader.h"
-#include <xcrypt.h>
 #include "node.h"
 #include "camera.h"
 

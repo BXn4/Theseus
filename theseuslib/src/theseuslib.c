@@ -12,15 +12,11 @@
 // the implementations below call (Nt*, Ke*, Ex*, Hal*, Rtl*).
 #include <xtl.h>
 
-// xboxp.h provides the private XAPI helpers we forward to: XQueryValue
-// for EEPROM reads, HalReturnToFirmware/HalQuickRebootRoutine for the
-// auto-power-down shutdown.
-#include <xboxp.h>
+// Use the local compatibility header instead of Microsoft private headers
+#include "../../theseus/xbox/xbox_private_types.h"
 
-// xconfig.h provides the EEPROM register layout (XBOX_USER_SETTINGS),
-// the EEPROM index constants (XC_MISC_FLAGS, XC_MAX_OS, ...) and the
-// kernel non-volatile setting accessor (ExSaveNonVolatileSetting).
-#include <xconfig.h>
+// Launch data page layout, shared with the dashboard side.
+#include <xlaunch.h>
 
 // FILE_DISPOSITION_INFORMATION has a "DeleteFile" field which collides
 // with the Win32 DeleteFile macro under UNICODE builds. Drop the macro

@@ -163,8 +163,8 @@ float g_transitionMotionBlur;
 D3DStateStats g_rsStats[256] = {};
 D3DStateStats g_tssStats[8 * 32] = {};
 
-// Wrapper-level state caches (Phase 1 outcome of the Sweep 2 trace).
-// See TheseusSet* / TheseusGet* in theseus/shared/theseus.h.
+// Wrapper-level state caches. See TheseusSet* / TheseusGet* in
+// theseus/shared/theseus.h.
 // BSS-zeroed: valid[] all false on first call.
 DWORD theseus_desktop_rs_cache[256];
 bool  theseus_desktop_rs_valid[256];

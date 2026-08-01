@@ -287,8 +287,6 @@ inline const char* XboxFS_TranslatePath(const char* xboxPath) {
                 }
             }
             return s_buf;
-
-            no_drive: ;
         }
     }
 
@@ -371,7 +369,7 @@ inline bool XboxFS_WildcardMatch(const char* pattern, const char* name) {
 // First, save a reference to the real function name
 #undef CreateFile
 #undef CreateFileA
-// Declare the real Win32 function (already declared by windows.h, but undef removed the macro)
+// Re-declare the real Win32 function after the #undef dropped the macro.
 extern "C" __declspec(dllimport) HANDLE __stdcall CreateFileA(
     LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
     LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition,
@@ -694,14 +692,8 @@ inline FILE* XboxFS_TryFATXFallback(const char* xboxPath) {
     // Only handle drive-letter paths
     if (!xboxPath || strlen(xboxPath) < 3 || xboxPath[1] != ':') return nullptr;
 
-    // We need xbox_hdd.h types - forward declare what we need
-    extern bool s_xboxHDDTried;
-    class XboxHDD;
-    class FATXReader;
-    struct FATXDirEntry;
-
-    // Access the global HDD instance from desktop_nodes.cpp
-    // This is a bit hacky but avoids circular includes
+    // The global HDD instance lives in desktop_nodes.cpp; go through this
+    // free function to avoid circular includes.
     FILE* XboxFS_FATXReadFile(const char* xboxPath);
     return XboxFS_FATXReadFile(xboxPath);
 }

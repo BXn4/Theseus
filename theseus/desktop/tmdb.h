@@ -20,8 +20,6 @@ struct TmdbMovie
     std::string title;       // canonical title from TMDB
     std::string overview;    // plot synopsis
     int         year;        // release year (0 = unknown)
-    int         runtime;     // minutes (0 = unknown; only set if details fetched)
-    std::string posterPath;  // TMDB CDN relative path (e.g. "/abc.jpg")
     float       voteAverage; // 0..10
     int         tmdbId;      // canonical TMDB id
 };
@@ -33,7 +31,6 @@ struct TmdbShow
     std::string title;
     std::string overview;
     int         year;        // first air year
-    std::string posterPath;
     float       voteAverage;
     int         tmdbId;
 };

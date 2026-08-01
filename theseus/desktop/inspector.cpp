@@ -377,9 +377,6 @@ void RenderInspectorPanel(IDirect3DDevice8* dev) {
             g_debugMode = false;
             if (g_bWireframe) {
                 g_bWireframe = false;
-#ifndef THESEUS_USE_BGFX
-                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-#endif
             }
             dev->m_inspectorEnabled = false;
             dev->m_inspectorSelectedNode = NULL;
@@ -481,12 +478,8 @@ void RenderInspectorPanel(IDirect3DDevice8* dev) {
                             ImGui::Text("  Texture: %s", (tnc && tnc->m_className) ? tnc->m_className : "?");
                         }
                         if (baseTex && baseTex->m_surface) {
-#ifndef THESEUS_USE_BGFX
-                            uintptr_t imguiTex = (uintptr_t)baseTex->m_surface->m_glTexture;
-#else
                             uintptr_t imguiTex = bgfx::isValid(baseTex->m_surface->m_bgfxTex)
                                 ? (uintptr_t)baseTex->m_surface->m_bgfxTex.idx : 0;
-#endif
                             if (imguiTex) {
                                 ImGui::SameLine();
                                 ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%dx%d", baseTex->m_nImageWidth, baseTex->m_nImageHeight);

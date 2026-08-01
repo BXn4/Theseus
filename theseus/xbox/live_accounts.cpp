@@ -13,7 +13,7 @@
 
 extern "C"
 {
-    extern XONLINE_USER g_Users[XONLINE_MAX_STORED_ONLINE_USERS];
+    extern XONLINE_USER_HD g_Users[XONLINE_MAX_STORED_ONLINE_USERS];
     extern DWORD g_NumUsers;
     extern bool g_bStarted;
 }
@@ -102,7 +102,7 @@ END_NODE_FUN()
 CLiveAccounts::CLiveAccounts() {}
 CLiveAccounts::~CLiveAccounts() {}
 
-XONLINE_USER g_Users[XONLINE_MAX_STORED_ONLINE_USERS] = { 0 };
+XONLINE_USER_HD g_Users[XONLINE_MAX_STORED_ONLINE_USERS] = { 0 };
 DWORD g_NumUsers = 0;
 bool g_bStarted = false;
 

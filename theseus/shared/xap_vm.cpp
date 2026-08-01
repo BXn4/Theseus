@@ -12,9 +12,7 @@
 #include "camera.h"
 #include "xap_compile.h"
 
-#ifdef _XBOX
-#include "..\..\ntos\inc\xlaunch.h"
-#endif
+
 
 //#define LOCALTRACE TRACE
 #define LOCALTRACE 1 ? (void)0 : ::Trace
@@ -265,7 +263,7 @@ CMemberFunctionObject::~CMemberFunctionObject() {}
 
 CObject* CMemberFunctionObject::Deref()
 {
-	CRunner runner(m_owner);   // CObject* — no cast needed now
+	CRunner runner(m_owner);   // CObject*, no cast needed
 	runner.SetFunc(m_function);
 	CObject* pObject = runner.Run();
 	Release();

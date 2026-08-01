@@ -186,6 +186,28 @@ static void BootMark(const char* label)
 	s_bootLastQpc = now;
 }
 
+// Printed once at the very top of boot so the debug console shows which
+// build is running the moment it attaches. Bump THESEUS_BUILD_TAG (or pass
+// -DTHESEUS_BUILD_TAG=\"...\") to give a build a name.
+#ifndef THESEUS_BUILD_TAG
+#define THESEUS_BUILD_TAG "dev"
+#endif
+
+static void BootBanner()
+{
+#ifdef _DEBUG
+	const char* cfg = "DEBUG";
+#else
+	const char* cfg = "RETAIL";
+#endif
+	char buf[160];
+	OutputDebugStringA("\n========================================\n");
+	_snprintf(buf, sizeof(buf), "  Theseus  [%s]  %s\n", THESEUS_BUILD_TAG, cfg);
+	OutputDebugStringA(buf);
+	OutputDebugStringA("  built " __DATE__ " " __TIME__ "\n");
+	OutputDebugStringA("========================================\n");
+}
+
 // Scene root
 CClass* g_pClass = NULL;
 CInstance* g_pObject = NULL;
@@ -1148,6 +1170,7 @@ static void Xbox_Init()
 
 bool InitApp()
 {
+	BootBanner();
 	BootMark("start");
 	Memory_Init();                               BootMark("Memory_Init");
 	Xbox_Init();                                 BootMark("Xbox_Init");

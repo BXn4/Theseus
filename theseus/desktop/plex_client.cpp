@@ -2,6 +2,8 @@
 
 #include "plex_client.h"
 #include "http_util.h"
+#include "json_util.h"
+#include "client_util.h"
 
 #include <cstdio>
 #include <cstring>
@@ -21,18 +23,6 @@ extern void SaveDesktopSettings();
 // Plex client identity
 // ============================================================================
 
-// RFC 4122 v4 UUID. Persisted to desktop.ini so it's stable per install.
-static void GenerateUUID(char out[37])
-{
-    unsigned char b[16];
-    for (int i = 0; i < 16; i++) b[i] = (unsigned char)(rand() & 0xFF);
-    b[6] = (b[6] & 0x0F) | 0x40;  // version 4
-    b[8] = (b[8] & 0x3F) | 0x80;  // variant 1
-    snprintf(out, 37,
-        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-        b[0],b[1],b[2],b[3], b[4],b[5], b[6],b[7],
-        b[8],b[9], b[10],b[11],b[12],b[13],b[14],b[15]);
-}
 
 static HttpHeaders PlexHeaders(bool wantJson, bool withToken)
 {
@@ -57,111 +47,6 @@ static HttpHeaders PlexHeaders(bool wantJson, bool withToken)
 
 
 // ============================================================================
-// Targeted JSON field extraction (same shape as tmdb.cpp).
-// ============================================================================
-
-static size_t Json_FindKey(const std::string& s, const char* key, size_t from = 0)
-{
-    std::string needle = "\"";
-    needle += key;
-    needle += "\"";
-    size_t k = s.find(needle, from);
-    if (k == std::string::npos) return std::string::npos;
-    size_t c = s.find(':', k + needle.size());
-    if (c == std::string::npos) return std::string::npos;
-    c++;
-    while (c < s.size() && (s[c] == ' ' || s[c] == '\t')) c++;
-    return c;
-}
-
-static std::string Json_DecodeString(const char* s, size_t len)
-{
-    std::string out;
-    out.reserve(len);
-    for (size_t i = 0; i < len; i++) {
-        char c = s[i];
-        if (c != '\\' || i + 1 >= len) { out.push_back(c); continue; }
-        char n = s[++i];
-        switch (n) {
-            case '"':  out.push_back('"');  break;
-            case '\\': out.push_back('\\'); break;
-            case '/':  out.push_back('/');  break;
-            case 'n':  out.push_back('\n'); break;
-            case 'r':  out.push_back('\r'); break;
-            case 't':  out.push_back('\t'); break;
-            default:   out.push_back(n);    break;
-        }
-    }
-    return out;
-}
-
-static std::string Json_GetString(const std::string& s, const char* key, size_t from = 0)
-{
-    size_t v = Json_FindKey(s, key, from);
-    if (v == std::string::npos || v >= s.size() || s[v] != '"') return "";
-    v++;
-    size_t end = v;
-    while (end < s.size()) {
-        if (s[end] == '\\' && end + 1 < s.size()) { end += 2; continue; }
-        if (s[end] == '"') break;
-        end++;
-    }
-    if (end >= s.size()) return "";
-    return Json_DecodeString(s.data() + v, end - v);
-}
-
-static int Json_GetInt(const std::string& s, const char* key, size_t from = 0)
-{
-    size_t v = Json_FindKey(s, key, from);
-    if (v == std::string::npos) return 0;
-    return (int)strtol(s.c_str() + v, NULL, 10);
-}
-
-// Split a JSON array into top-level object substrings. Stops at the matching
-// ']'. Returns vector of substrings (each starts with '{', ends with '}').
-static std::vector<std::string> Json_SplitArray(const std::string& s, size_t arrStart)
-{
-    std::vector<std::string> out;
-    if (arrStart >= s.size() || s[arrStart] != '[') return out;
-    size_t i = arrStart + 1;
-    while (i < s.size()) {
-        while (i < s.size() && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t' || s[i] == ',')) i++;
-        if (i >= s.size() || s[i] == ']') break;
-        if (s[i] != '{') { i++; continue; }
-        size_t start = i;
-        int depth = 0;
-        bool inStr = false;
-        for (; i < s.size(); i++) {
-            char c = s[i];
-            if (inStr) {
-                if (c == '\\' && i + 1 < s.size()) { i++; continue; }
-                if (c == '"') inStr = false;
-            } else {
-                if (c == '"') inStr = true;
-                else if (c == '{') depth++;
-                else if (c == '}') {
-                    depth--;
-                    if (depth == 0) { i++; break; }
-                }
-            }
-        }
-        out.push_back(s.substr(start, i - start));
-    }
-    return out;
-}
-
-// Find the named array's '[' offset, or npos.
-static size_t Json_FindArray(const std::string& s, const char* key)
-{
-    size_t v = Json_FindKey(s, key);
-    if (v == std::string::npos) return std::string::npos;
-    while (v < s.size() && (s[v] == ' ' || s[v] == '\t')) v++;
-    if (v >= s.size() || s[v] != '[') return std::string::npos;
-    return v;
-}
-
-
-// ============================================================================
 // In-flight state. One slot per fetch op, guarded by g_mtx + ready atomic.
 // ============================================================================
 
@@ -179,25 +64,10 @@ static std::vector<PlexServer> s_servers;
 static std::thread             s_serversThread;
 static std::string             s_activeServerName;
 
-// Library list (most recently fetched server)
-static std::atomic<bool>        s_libsReady{false};
-static std::vector<PlexLibrary> s_libs;
-static std::thread              s_libsThread;
-
-// Library items (most recently fetched section)
-static std::atomic<bool>     s_itemsReady{false};
-static std::vector<PlexItem> s_items;
-static std::thread           s_itemsThread;
-
-// TV seasons (children of a show)
-static std::atomic<bool>        s_seasonsReady{false};
-static std::vector<PlexSeason>  s_seasons;
-static std::thread              s_seasonsThread;
-
-// TV episodes (children of a season)
-static std::atomic<bool>         s_episodesReady{false};
-static std::vector<PlexEpisode>  s_episodes;
-static std::thread               s_episodesThread;
+// TV drill. One worker thread per season/episode fetch; results land in the
+// pre-stage cache below.
+static std::thread s_seasonsThread;
+static std::thread s_episodesThread;
 
 // Art download queue
 static std::mutex                                  s_artMtx;
@@ -234,17 +104,11 @@ void Plex_Init()
             g_plexToken[0] ? "yes" : "no", g_plexClientId);
 }
 
-static void JoinIf(std::thread& t) {
-    if (t.joinable()) t.join();
-}
-
 void Plex_Shutdown()
 {
     s_pinCancel = true;
     JoinIf(s_pinThread);
     JoinIf(s_serversThread);
-    JoinIf(s_libsThread);
-    JoinIf(s_itemsThread);
     JoinIf(s_seasonsThread);
     JoinIf(s_episodesThread);
     JoinIf(s_syncThread);
@@ -257,10 +121,6 @@ void Plex_SignOut()
     g_plexToken[0] = 0;
     std::lock_guard<std::mutex> lk(g_mtx);
     s_servers.clear();   s_serversReady   = false;
-    s_libs.clear();      s_libsReady      = false;
-    s_items.clear();     s_itemsReady     = false;
-    s_seasons.clear();   s_seasonsReady   = false;
-    s_episodes.clear();  s_episodesReady  = false;
     s_activeServerName.clear();
     s_cacheLibs.clear();
     s_cacheItems.clear();
@@ -437,61 +297,6 @@ std::vector<PlexServer> Plex_GetServers()
 bool Plex_ServersReady() { return s_serversReady; }
 
 
-// ============================================================================
-// Library list
-// ============================================================================
-
-static void LibrariesWorker(std::string serverUri)
-{
-    std::string url = serverUri + "/library/sections";
-    HttpResponse r = Http_Get(url, PlexHeaders(true, true));
-    std::vector<PlexLibrary> libs;
-    if (r.ok()) {
-        // Plex wraps section list as { MediaContainer: { Directory: [...] } }
-        size_t arr = Json_FindArray(r.body, "Directory");
-        if (arr != std::string::npos) {
-            for (const auto& obj : Json_SplitArray(r.body, arr)) {
-                PlexLibrary lib;
-                lib.sectionKey = Json_GetString(obj, "key");
-                lib.title      = Json_GetString(obj, "title");
-                lib.type       = Json_GetString(obj, "type");
-                if (!lib.sectionKey.empty()) libs.push_back(lib);
-            }
-        }
-    } else {
-        fprintf(stderr, "[Plex] sections fetch failed (status %ld)\n", r.status);
-    }
-
-    {
-        std::lock_guard<std::mutex> lk(g_mtx);
-        s_libs = std::move(libs);
-    }
-    s_libsReady = true;
-    fprintf(stderr, "[Plex] %zu librar%s on %s\n",
-            s_libs.size(), s_libs.size() == 1 ? "y" : "ies", serverUri.c_str());
-}
-
-void Plex_FetchLibraries(const std::string& serverUri)
-{
-    Plex_Init();
-    JoinIf(s_libsThread);
-    s_libsReady = false;
-    s_libsThread = std::thread(LibrariesWorker, serverUri);
-}
-
-std::vector<PlexLibrary> Plex_GetLibraries()
-{
-    std::lock_guard<std::mutex> lk(g_mtx);
-    return s_libs;
-}
-
-bool Plex_LibrariesReady() { return s_libsReady; }
-
-
-// ============================================================================
-// Library items
-// ============================================================================
-
 // "{serverUri}{path}?X-Plex-Token={token}" for thumb / art / stream URLs.
 static std::string BuildAssetUrl(const std::string& serverUri,
                                  const std::string& path)
@@ -503,59 +308,6 @@ static std::string BuildAssetUrl(const std::string& serverUri,
     out += g_plexToken;
     return out;
 }
-
-static void ItemsWorker(std::string serverUri, std::string sectionKey)
-{
-    std::string url = serverUri + "/library/sections/" + sectionKey + "/all";
-    HttpResponse r = Http_Get(url, PlexHeaders(true, true));
-    std::vector<PlexItem> items;
-    if (r.ok()) {
-        size_t arr = Json_FindArray(r.body, "Metadata");
-        if (arr != std::string::npos) {
-            for (const auto& obj : Json_SplitArray(r.body, arr)) {
-                PlexItem it;
-                it.ratingKey = Json_GetString(obj, "ratingKey");
-                it.title     = Json_GetString(obj, "title");
-                int y        = Json_GetInt(obj, "year");
-                if (y > 0) {
-                    char ybuf[8]; snprintf(ybuf, sizeof(ybuf), "%d", y);
-                    it.year = ybuf;
-                }
-                it.summary   = Json_GetString(obj, "summary");
-                it.thumbUrl  = BuildAssetUrl(serverUri, Json_GetString(obj, "thumb"));
-                it.artUrl    = BuildAssetUrl(serverUri, Json_GetString(obj, "art"));
-                it.type      = Json_GetString(obj, "type");
-                if (!it.ratingKey.empty()) items.push_back(it);
-            }
-        }
-    } else {
-        fprintf(stderr, "[Plex] items fetch failed (status %ld)\n", r.status);
-    }
-
-    {
-        std::lock_guard<std::mutex> lk(g_mtx);
-        s_items = std::move(items);
-    }
-    s_itemsReady = true;
-    fprintf(stderr, "[Plex] %zu item(s) in section %s\n", s_items.size(), sectionKey.c_str());
-}
-
-void Plex_FetchItems(const std::string& serverUri, const std::string& sectionKey)
-{
-    Plex_Init();
-    JoinIf(s_itemsThread);
-    s_itemsReady = false;
-    s_itemsThread = std::thread(ItemsWorker, serverUri, sectionKey);
-}
-
-std::vector<PlexItem> Plex_GetItems()
-{
-    std::lock_guard<std::mutex> lk(g_mtx);
-    return s_items;
-}
-
-bool Plex_ItemsReady() { return s_itemsReady; }
-
 
 // ============================================================================
 // TV drill -- /library/metadata/{rk}/children returns seasons or episodes.
@@ -586,32 +338,20 @@ static void SeasonsWorker(std::string serverUri, std::string showRk)
         fprintf(stderr, "[Plex] seasons fetch failed (status %ld)\n", r.status);
     }
 
+    size_t n = seasons.size();
     {
         std::lock_guard<std::mutex> lk(g_mtx);
-        s_seasons              = seasons;
         s_cacheSeasons[showRk] = std::move(seasons);
     }
-    s_seasonsReady = true;
-    fprintf(stderr, "[Plex] %zu season(s) under show %s\n",
-            s_seasons.size(), showRk.c_str());
+    fprintf(stderr, "[Plex] %zu season(s) under show %s\n", n, showRk.c_str());
 }
 
 void Plex_FetchSeasons(const std::string& serverUri, const std::string& showRatingKey)
 {
     Plex_Init();
     JoinIf(s_seasonsThread);
-    s_seasonsReady = false;
     s_seasonsThread = std::thread(SeasonsWorker, serverUri, showRatingKey);
 }
-
-std::vector<PlexSeason> Plex_GetSeasons()
-{
-    std::lock_guard<std::mutex> lk(g_mtx);
-    return s_seasons;
-}
-
-bool Plex_SeasonsReady() { return s_seasonsReady; }
-
 
 static void EpisodesWorker(std::string serverUri, std::string seasonRk)
 {
@@ -639,31 +379,20 @@ static void EpisodesWorker(std::string serverUri, std::string seasonRk)
         fprintf(stderr, "[Plex] episodes fetch failed (status %ld)\n", r.status);
     }
 
+    size_t n = episodes.size();
     {
         std::lock_guard<std::mutex> lk(g_mtx);
-        s_episodes                  = episodes;
-        s_cacheEpisodes[seasonRk]   = std::move(episodes);
+        s_cacheEpisodes[seasonRk] = std::move(episodes);
     }
-    s_episodesReady = true;
-    fprintf(stderr, "[Plex] %zu episode(s) under season %s\n",
-            s_episodes.size(), seasonRk.c_str());
+    fprintf(stderr, "[Plex] %zu episode(s) under season %s\n", n, seasonRk.c_str());
 }
 
 void Plex_FetchEpisodes(const std::string& serverUri, const std::string& seasonRatingKey)
 {
     Plex_Init();
     JoinIf(s_episodesThread);
-    s_episodesReady = false;
     s_episodesThread = std::thread(EpisodesWorker, serverUri, seasonRatingKey);
 }
-
-std::vector<PlexEpisode> Plex_GetEpisodes()
-{
-    std::lock_guard<std::mutex> lk(g_mtx);
-    return s_episodes;
-}
-
-bool Plex_EpisodesReady() { return s_episodesReady; }
 
 
 // ============================================================================
@@ -874,14 +603,6 @@ bool Plex_Cache_GetEpisodes(const std::string& seasonRatingKey,
 // Art cache
 // ============================================================================
 
-#include <sys/stat.h>
-static inline int Mkdir_(const char* path) {
-#ifdef _WIN32
-    return mkdir(path);
-#else
-    return mkdir(path, 0755);
-#endif
-}
 
 // Host path -- curl writes here. Lives at Library/Plex/<rk>.jpg next to binary.
 static std::string Plex_ArtCacheHostPath(const std::string& ratingKey)

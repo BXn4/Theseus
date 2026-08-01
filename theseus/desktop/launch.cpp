@@ -6,6 +6,7 @@
 #include "std.h"
 #include "launch.h"
 #include "panel_shared.h"
+#include "xcloud_client.h"
 
 #include <SDL.h>
 
@@ -246,15 +247,14 @@ static bool Launch_DoSpawn(const char* expanded)
 // Expand $VARs, route the spec through the matching launcher module
 // (Build()), log the trace, then spawn. Both public dispatchers funnel
 // through this so the trace, error reporting, and command-form rules
-// live in one place. typeHint is the games.ini `type=` value when the
-// caller has it; pass NULL to fall back to Claims-based detection.
-static bool Launch_ExpandAndSpawn(const char* spec, const char* typeHint,
+// live in one place.
+static bool Launch_ExpandAndSpawn(const char* spec,
                                   char* finalOut, size_t finalSize)
 {
 	if (!spec || !spec[0]) return false;
 	char expanded[2048];
 	PathTemplate_Expand(spec, expanded, sizeof(expanded));
-	Launcher_Build(expanded, typeHint, finalOut, finalSize);
+	Launcher_Build(expanded, finalOut, finalSize);
 	fprintf(stderr, "[launch] in:  %s\n", spec);
 	if (strcmp(spec, expanded) != 0)
 		fprintf(stderr, "[launch] var: %s\n", expanded);
@@ -266,7 +266,7 @@ static bool Launch_ExpandAndSpawn(const char* spec, const char* typeHint,
 void DesktopLaunch(const char* spec)
 {
 	char finalCmd[2048];
-	Launch_ExpandAndSpawn(spec, NULL, finalCmd, sizeof(finalCmd));
+	Launch_ExpandAndSpawn(spec, finalCmd, sizeof(finalCmd));
 }
 
 // Spawn called by the launch overlay tick once the fade-in completes.
@@ -275,7 +275,7 @@ void DesktopLaunch(const char* spec)
 static void SpawnLaunchSpec(const char* spec)
 {
 	char finalCmd[2048];
-	if (!Launch_ExpandAndSpawn(spec, NULL, finalCmd, sizeof(finalCmd))) return;
+	if (!Launch_ExpandAndSpawn(spec, finalCmd, sizeof(finalCmd))) return;
 
 	extern SDL_Window* g_pSDLWindow;
 	if (g_pSDLWindow) SDL_MinimizeWindow(g_pSDLWindow);
@@ -389,6 +389,22 @@ void LaunchOverlay_Tick()
 void DesktopLaunchGame(const char* spec)
 {
 	if (!spec || !spec[0]) return;
+
+	// xCloud / remote play take over the window in-process through the same
+	// helper the Settings panel uses. They must NOT go through the launch
+	// overlay + window-minimize + spawn path a real on-disk title uses, so
+	// intercept here before any of that.
+	extern void Xcloud_LaunchStream(const char* type, const char* id);
+	if (strncmp(spec, "xcloud://", 9) == 0) {
+		fprintf(stderr, "[launch] xCloud stream: %s\n", spec + 9);
+		Xcloud_LaunchStream("cloud", spec + 9);
+		return;
+	}
+	if (strncmp(spec, "xhome://", 8) == 0) {
+		fprintf(stderr, "[launch] remote play: %s\n", spec + 8);
+		Xcloud_LaunchStream("home", spec + 8);
+		return;
+	}
 
 	fprintf(stderr, "[launch] Queued: %s\n", spec);
 

@@ -29,36 +29,13 @@ The split is intentional. The Xbox build stays faithful to what you'd expect fro
   <img src="docs/images/retroarch-tab.png" width="48%" alt="RetroArch tab in Title Maker">
 </p>
 
-## On Xbox
+---
 
-A drop-in replacement for the stock Xbox dashboard on modded consoles. Same look and behavior, because that's what it is. Rebuilt plank by plank and still going.
+**Running it:** [Quick Start](#quick-start) · [Features](#features) · [Adding games](#adding-games) · [Customization](#customization) · [Controls](#controls-desktop)
 
-What works:
-- Every original scene, animation, and skin slot
-- UIX Lite skins drop in unchanged. Skin authors don't have to do anything
-- Hot swap skins from settings, no reboot
-- ISO / CCI launching from the harddrive menu, plus the original XBE flow
-- Hundreds of titles scan in milliseconds
-- Title icons auto populate from each game's XBE certificate
-- Quick overlay (LT + B) for ISO loader, file manager, FTP / drive widgets
-- FTP server, recovery / panic screen, MP3 soundtrack playback
+**Working on it:** [Dependencies](#dependencies) · [Building](#building) · [How it works](#how-it-works) · [Heritage](#heritage) · [Credits](#credits) · [Third-party](#third-party-libraries) · [License](#license)
 
-[Download for Xbox ->](https://github.com/MrMilenko/Theseus/releases) (or build from source, see below)
-
-## On the desktop (UIX Desktop)
-
-UIX Desktop is the Theseus engine compiled for your computer, with the modern features bolted on. macOS, Linux, Windows, Steam Deck friendly.
-
-- **3D launcher** for native PC games, Steam libraries, RetroArch ROMs, and Xbox ISOs via [xemu](https://xemu.app)
-- **Media library** that scans your Movies and TV folders, pulls posters from [TMDB](https://www.themoviedb.org/), plays back through libmpv
-- **Skin editor** with live XAP scripting and a scene inspector. Change a skin, see it instantly
-- **Title Maker** for adding games and apps, with per launcher import flows for Steam and RetroArch
-- **Xbox HDD browser** that opens qcow2 and FATX images
-- **CRT post process** for the old TV look. Scanlines, curvature, phosphor, bloom, all tunable
-- **Graphics knobs** in Settings -> Display: vsync mode, FPS cap, MSAA, hardware video decode
-- **Controllers**: Xbox and PlayStation pads via SDL2
-
-[Download for desktop ->](https://github.com/MrMilenko/Theseus/releases)
+---
 
 ## Quick Start
 
@@ -70,26 +47,49 @@ UIX Desktop is the Theseus engine compiled for your computer, with the modern fe
 4. Copy `Configs/` to `C:\UIX Configs\`
 5. Boot it. If something's missing, the panic screen tells you what.
 
+[Download for Xbox ->](https://github.com/MrMilenko/Theseus/releases)
+
 ### Desktop
 
 1. Grab the release for your OS
-2. Run it. That's it.
+2. Install the runtime libraries for your platform (see [Dependencies](#dependencies))
+3. Run it
 
-The Windows release ships with the DLLs it needs. macOS and Linux dynamically link to system libraries, so you'll want these installed:
+Windows is the exception: that release ships with the DLLs it needs, so step 2 is already done for you. macOS and Linux link against system libraries.
 
-**macOS (Homebrew):**
-```
-brew install sdl2 sdl2_mixer mpv curl
-```
+[Download for desktop ->](https://github.com/MrMilenko/Theseus/releases)
 
-**Linux (Debian / Ubuntu):**
-```
-sudo apt install libsdl2-2.0-0 libsdl2-mixer-2.0-0 libmpv2 libcurl4
-```
+Building from source instead? Jump to [Building](#building).
 
-(Some distros ship `libmpv1` instead of `libmpv2`. Either works.)
+## Features
 
-If you'd rather build from source, jump down to [Building](#building).
+### Xbox
+
+A drop-in replacement for the stock Xbox dashboard on modded consoles. Same look and behavior, because that's what it is. Rebuilt plank by plank and still going.
+
+- Every original scene, animation, and skin slot
+- UIX Lite skins drop in unchanged. Skin authors don't have to do anything
+- Hot swap skins from settings, no reboot
+- ISO / CCI launching from the harddrive menu, plus the original XBE flow
+- Hundreds of titles scan in milliseconds
+- Title icons auto populate from each game's XBE certificate
+- Quick overlay (LT + B) for ISO loader, file manager, FTP / drive widgets
+- FTP server, recovery / panic screen, MP3 soundtrack playback
+
+### UIX Desktop
+
+The Theseus engine compiled for your computer, with the modern features bolted on. macOS, Linux, Windows, Steam Deck friendly.
+
+- **3D launcher** for native PC games, Steam libraries, RetroArch ROMs, and Xbox ISOs via [xemu](https://xemu.app)
+- **xCloud / Game Pass streaming** signs in with your Xbox account and drops your whole cloud library into the games grid, box art and all. Remote play for your own console shows up under "Your Xbox"
+- **Media library** that scans your Movies and TV folders, pulls posters from [TMDB](https://www.themoviedb.org/), and plays back through libmpv. [Plex](https://www.plex.tv/) and [Jellyfin](https://jellyfin.org/) servers browse and stream in the same UI (Jellyfin signs in with Quick Connect)
+- **Music visualizer** with in-scene [projectM](https://github.com/projectM-visualizer/projectm) (MilkDrop) presets reacting to whatever's playing
+- **Skin editor** with live XAP scripting and a scene inspector. Change a skin, see it instantly
+- **Title Maker** for adding games and apps, with per launcher import flows for Steam and RetroArch
+- **Xbox HDD browser** that opens qcow2 and FATX images
+- **CRT post process** for the old TV look. Scanlines, curvature, phosphor, bloom, all tunable
+- **Graphics knobs** in Settings > Display: vsync mode, FPS cap, MSAA, hardware video decode
+- **Controllers**: Xbox and PlayStation pads via SDL2
 
 ## Adding games
 
@@ -111,7 +111,10 @@ If you don't use Steam or RetroArch, you can turn either tab off under Optional 
 
 ## Controls (desktop)
 
-**Dashboard:**
+Xbox and PlayStation controllers work via SDL2 GameController. Keyboard equivalents:
+
+<details>
+<summary><b>Dashboard navigation</b></summary>
 
 | Key | Xbox button | Action |
 |---|---|---|
@@ -123,7 +126,10 @@ If you don't use Steam or RetroArch, you can turn either tab off under Optional 
 | ` (backtick) | Black | Stop |
 | WASD | Left stick | Analog navigation |
 
-**Media playback:**
+</details>
+
+<details>
+<summary><b>Media playback</b></summary>
 
 | Key | Action |
 |---|---|
@@ -133,7 +139,10 @@ If you don't use Steam or RetroArch, you can turn either tab off under Optional 
 | `[` / `]` | Previous / Next in playlist |
 | T | Track picker (audio + subtitles) |
 
-**Tools (desktop only):**
+</details>
+
+<details>
+<summary><b>Tools (desktop only)</b></summary>
 
 | Key | Action |
 |---|---|
@@ -148,13 +157,56 @@ If you don't use Steam or RetroArch, you can turn either tab off under Optional 
 | Ctrl+M | Mute |
 | Ctrl+R | Restart dashboard |
 
-Xbox and PlayStation controllers also work via SDL2 GameController.
+</details>
 
 ---
 
 # For developers
 
 The rest is build instructions, architecture notes, and the lineage. Skip if you just want to run it.
+
+## Dependencies
+
+One list, used by both the [Quick Start](#quick-start) and [Building](#building). "Run" is what a downloaded release needs; "Build" is that plus the toolchain and headers.
+
+**macOS (Homebrew):**
+
+```
+# Run a release
+brew install sdl2 sdl2_mixer mpv curl ffmpeg opus
+
+# Build from source (adds the toolchain + libdatachannel's deps)
+brew install sdl2 sdl2_mixer mpv curl ffmpeg opus pkg-config cmake openssl@3
+```
+
+**Linux (Debian / Ubuntu):**
+
+```
+# Run a release
+sudo apt install libsdl2-2.0-0 libsdl2-mixer-2.0-0 libmpv2 libcurl4 libopus0
+
+# Build from source
+sudo apt install build-essential pkg-config cmake \
+                 libsdl2-dev libsdl2-mixer-dev \
+                 libvulkan-dev libx11-dev libgl-dev \
+                 libmpv-dev libcurl4-openssl-dev libssl-dev \
+                 libavcodec-dev libavutil-dev libswscale-dev libopus-dev
+```
+
+**Windows (MSYS2 / MinGW64):**
+
+```
+pacman -S make pkg-config mingw-w64-x86_64-gcc \
+          mingw-w64-x86_64-SDL2 mingw-w64-x86_64-SDL2_mixer \
+          mingw-w64-x86_64-mpv mingw-w64-x86_64-curl \
+          mingw-w64-x86_64-vulkan-headers mingw-w64-x86_64-vulkan-loader
+```
+
+Notes:
+
+- Some distros ship `libmpv1` instead of `libmpv2`. Either works.
+- The FFmpeg runtime libs come in with libmpv. `ffmpeg` / `libopus0` cover the xCloud video and audio decoders.
+- OpenSSL is a runtime dependency of xCloud. On macOS it arrives with brew's curl / mpv / ffmpeg, and on Debian `libssl3` is already in the base install, so neither needs it listed for the run case. Building libdatachannel does need the headers, which is why `openssl@3` and `libssl-dev` show up above.
 
 ## Building
 
@@ -176,61 +228,66 @@ make CONFIG=retail XDK_BASE=/path/to/xbox
 
 Output lands at `~/builds/theseus/xbox-retail/default.xbe`.
 
+The Xbox target is not built in CI, because the SDK tree it needs isn't something this repo can ship. Verify it locally before you ship anything.
+
 ### Desktop
 
-Same source tree, different Makefile target. Needs C++17, SDL2, SDL2_mixer, libmpv, libcurl. Rendering goes through bgfx: Metal on macOS, Vulkan on Linux and Windows. bgfx ships as a git submodule and the shaders compile from .sc source via `shaderc`.
+Same source tree, different Makefile target. Needs C++17 and the packages in [Dependencies](#dependencies). Rendering goes through bgfx: Metal on macOS, Vulkan on Linux and Windows. The compiled shader binaries live in-tree under `Data/shaders/`, so a normal build never touches `shaderc`.
 
-Init the submodules once before the first build:
+**1. Init the submodules** (once):
 
 ```
 git submodule update --init --recursive
 ```
 
-Then build the bgfx libraries (one time per platform) and compile shaders:
+**2. Build the bgfx runtime libraries** (once per platform):
 
 ```
 # macOS (Apple Silicon)
 make -C theseus/third-party/bgfx -j osx-arm64
-make -C build shaders-bgfx
 
 # Linux
-make -C theseus/third-party/bgfx -j linux-release64
-make -C build shaders-bgfx-spirv
+make -C theseus/third-party/bgfx -j linux-gcc-release64
 
-# Windows (built from a MSYS2 mingw shell, or cross-compiled from Linux)
+# Windows (from a MSYS2 mingw shell, or cross-compiled from Linux)
 make -C theseus/third-party/bgfx -j mingw-gcc-release64
-make -C build shaders-bgfx-spirv
 ```
 
-After that, the per-OS build commands:
+**3. Build libdatachannel** (once per platform, macOS and Linux).
 
-**macOS:**
+This one is easy to skip and the failure is quiet: the Makefile only defines `THESEUS_HAVE_WEBRTC` when it finds the static lib, so without this step everything compiles and links fine and xCloud is simply gone from the build. The directory name matters, `build-mac` on macOS and `build-linux` on Linux, because that's where the Makefile looks.
+
 ```
-brew install sdl2 sdl2_mixer mpv curl pkg-config
-cd build && make desktop BGFX=1
+cd theseus/third-party/libdatachannel
+
+# macOS
+cmake -S . -B build-mac -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+      -DNO_WEBSOCKET=1 -DNO_EXAMPLES=1 -DNO_TESTS=1 \
+      -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+cmake --build build-mac -j
+
+# Linux
+cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+      -DNO_WEBSOCKET=1 -DNO_EXAMPLES=1 -DNO_TESTS=1
+cmake --build build-linux -j
+```
+
+Windows cross builds stub xCloud out, so this step doesn't apply there.
+
+**4. Build the dashboard:**
+
+```
+# macOS / Linux
+cd build && make desktop
 ~/builds/theseus/desktop/theseus
+
+# Windows (MSYS2 / MinGW64)
+cd build && make desktop-win64
 ```
 
-**Linux:**
-```
-sudo apt install build-essential pkg-config libsdl2-dev libsdl2-mixer-dev \
-                 libvulkan-dev libx11-dev libmpv-dev libcurl4-openssl-dev
-cd build && make desktop BGFX=1
-~/builds/theseus/desktop/theseus
-```
+`make desktop` also builds the vendored projectM (MilkDrop visualizer) into a local prefix on first run. Only re-run the `shaders-bgfx*` Makefile targets if you edit a `.sc` shader source; the checked-in `.bin` files cover every backend.
 
-**Windows (MSYS2 / MinGW64):**
-```
-pacman -S make pkg-config mingw-w64-x86_64-gcc \
-          mingw-w64-x86_64-SDL2 mingw-w64-x86_64-SDL2_mixer \
-          mingw-w64-x86_64-mpv mingw-w64-x86_64-curl \
-          mingw-w64-x86_64-vulkan-headers mingw-w64-x86_64-vulkan-loader
-cd build && make desktop-win64 BGFX=1
-```
-
-Cross-compiling for Windows from macOS / Linux, ARM64 Linux, or any of the more involved setups is in [`docs/desktop/`](docs/desktop/). The CI workflow runs all the build matrix combinations on every push, which is the closest thing to executable docs for the one-time setup.
-
-The legacy OpenGL backend still compiles by dropping the `BGFX=1` flag, useful for older hardware without Vulkan support. Shipped releases use the bgfx path.
+Cross-compiling for Windows from macOS / Linux, ARM64 Linux, or any of the more involved setups is in [`docs/desktop/`](docs/desktop/). The CI workflow builds all four desktop targets (macOS, Linux x64, Linux ARM64, Windows) on every push, which is the closest thing to executable docs for the one-time setup.
 
 ## How it works
 
@@ -269,9 +326,8 @@ For the broader UIX project narrative, see [UIX History](https://github.com/MrMi
 - **Rocky5**: skin presets and the Colourizer XBE color patcher (technique descends from **ZogoChieftan**'s in-dashboard color patching in BlackStormX, circa 2004)
 - **JbOnE**: original UIX, the lineage Theseus continues
 
-**Related projects:**
+**Upstream code:**
 - [Team Resurgent](https://github.com/Team-Resurgent): [PrometheOS](https://github.com/Team-Resurgent/PrometheOS-Firmware) (the toolbox is forked from here via [UIX Lite Toolbox](https://github.com/OfficialTeamUIX/UIX-Lite-Toolbox)) and [Hermes](https://github.com/Team-Resurgent/Hermes) (ISO/CCI mount support)
-- [xemu](https://xemu.app): Original Xbox emulator that the desktop launcher integrates with for ISO playback
 
 ## Third-party libraries
 
@@ -295,7 +351,11 @@ Desktop build:
 | [bgfx](https://github.com/bkaradzic/bgfx) | BSD 2-Clause | Cross-platform render abstraction (Metal, Vulkan) |
 | [bx](https://github.com/bkaradzic/bx) | BSD 2-Clause | bgfx base library |
 | [bimg](https://github.com/bkaradzic/bimg) | BSD 2-Clause | bgfx image utility library |
-| [GLEW](https://glew.sourceforge.net/) | Modified BSD / MIT | OpenGL extension loader (legacy GL backend, Windows only) |
+| [projectM](https://github.com/projectM-visualizer/projectm) | LGPL 2.1+ | MilkDrop music visualizer |
+| [FFmpeg](https://ffmpeg.org/) (libavcodec / libswscale / libavutil) | LGPL 2.1+ | xCloud video decode |
+| [Opus](https://opus-codec.org/) | BSD 3-Clause | xCloud audio decode |
+| [libdatachannel](https://github.com/paullouisageneau/libdatachannel) | MPL 2.0 | WebRTC transport for xCloud / remote play (one-time local build, see [Building](#desktop-1)) |
+| [GLEW](https://glew.sourceforge.net/) | Modified BSD / MIT | OpenGL extension loader (projectM / milkdrop visualizer, Windows only) |
 
 Full catalog with attributions is in [`LICENSE-THIRD-PARTY.md`](LICENSE-THIRD-PARTY.md).
 

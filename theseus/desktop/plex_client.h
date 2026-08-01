@@ -61,24 +61,11 @@ std::vector<PlexServer>    Plex_GetServers();
 bool                       Plex_ServersReady();
 std::string                Plex_GetActiveServerName();
 
-void                       Plex_FetchLibraries(const std::string& serverUri);
-std::vector<PlexLibrary>   Plex_GetLibraries();
-bool                       Plex_LibrariesReady();
-
-void                       Plex_FetchItems(const std::string& serverUri,
-                                           const std::string& sectionKey);
-std::vector<PlexItem>      Plex_GetItems();
-bool                       Plex_ItemsReady();
-
+// TV drill. Results land in the pre-stage cache (Plex_Cache_GetSeasons/Episodes).
 void                       Plex_FetchSeasons(const std::string& serverUri,
                                              const std::string& showRatingKey);
-std::vector<PlexSeason>    Plex_GetSeasons();
-bool                       Plex_SeasonsReady();
-
 void                       Plex_FetchEpisodes(const std::string& serverUri,
                                               const std::string& seasonRatingKey);
-std::vector<PlexEpisode>   Plex_GetEpisodes();
-bool                       Plex_EpisodesReady();
 
 // Sync direct-play URL resolver. Empty on failure.
 std::string Plex_ResolveStreamUrl(const std::string& serverUri,

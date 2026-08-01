@@ -1,8 +1,7 @@
 // media_ui.cpp: fullscreen video render + Xbox-themed OSD.
 //
-// Two paint paths: CRT FBO blit when the post-process is on, ImGui::Image
-// when it's off (direct FBO0 blits don't display on Apple Silicon GL).
-// s_videoBlittedToFBO is the handshake.
+// Two paint paths: blit into the CRT pass when the post-process is on,
+// ImGui::Image when it's off. s_videoBlittedToFBO is the handshake.
 
 #include "std.h"
 #include "dashapp.h"
@@ -14,22 +13,6 @@
 
 #include <string>
 #include <vector>
-
-#ifdef __APPLE__
-#define GL_SILENCE_DEPRECATION
-#include <OpenGL/gl3.h>
-#elif defined(_WIN32)
-#ifdef THESEUS_USE_BGFX
-#include <windows.h>
-#include <GL/gl.h>
-#else
-#include <GL/glew.h>
-#endif
-#else
-#define GL_GLEXT_PROTOTYPES
-#include <GL/gl.h>
-#include <GL/glext.h>
-#endif
 #include <SDL.h>
 
 #include <cstdio>
@@ -149,38 +132,11 @@ void MediaUI_DrawFullscreenVideo()
 {
     // Pick destination size based on the actually-bound framebuffer.
     int ww = 1280, wh = 720;
-#ifndef THESEUS_USE_BGFX
-    GLint boundFBO = 0;
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &boundFBO);
-    if (boundFBO != 0) {
-        GLint texName = 0;
-        glGetFramebufferAttachmentParameteriv(
-            GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-            GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &texName);
-        if (texName) {
-            GLint prevTex = 0;
-            glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
-            glBindTexture(GL_TEXTURE_2D, (GLuint)texName);
-            GLint w = 0, h = 0;
-            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
-            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
-            glBindTexture(GL_TEXTURE_2D, (GLuint)prevTex);
-            if (w > 0 && h > 0) { ww = w; wh = h; }
-        }
-    } else if (g_pSDLWindow) {
-        SDL_GetWindowSize(g_pSDLWindow, &ww, &wh);
-    }
-
-    glViewport(0, 0, ww, wh);
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-#else
     int boundFBO = 0; // unused under BGFX
     if (g_pSDLWindow) SDL_GetWindowSize(g_pSDLWindow, &ww, &wh);
     // bgfx view 0 owns presentation; MediaPlayer_RenderToScreen
     // submits the fullscreen quad into view 0 directly. The clear is
     // configured on view 0 by the dashboard's Clear() shim.
-#endif
 
     // Blit the video frame into whatever framebuffer is currently bound
     // (the CRT capture FBO when CRT is on, or the backbuffer otherwise).
@@ -188,41 +144,6 @@ void MediaUI_DrawFullscreenVideo()
     // the video, not just to the dashboard. Letterbox-fit to viewport size.
     s_videoBlittedToFBO = false;
 
-#ifndef THESEUS_USE_BGFX
-    // CRT path only. With no FBO bound, RenderOSD does the picture as
-    // an ImGui::Image instead (FBO0 blits aren't reliable cross-platform).
-    if (boundFBO == 0) return;
-
-    int vw = 0, vh = 0;
-    unsigned int tex = MediaPlayer_GetVideoTexture(&vw, &vh);
-    if (tex && vw > 0 && vh > 0) {
-        float vAspect = (float)vw / (float)vh;
-        float wAspect = (float)ww / (float)wh;
-        float dstW, dstH;
-        if (vAspect > wAspect) { dstW = (float)ww; dstH = (float)ww / vAspect; }
-        else                   { dstH = (float)wh; dstW = (float)wh * vAspect; }
-        int dstX = (int)(((float)ww - dstW) * 0.5f);
-        int dstY = (int)(((float)wh - dstH) * 0.5f);
-
-        unsigned int srcFBO = MediaPlayer_GetFBO();
-        if (srcFBO) {
-            GLint prevDrawFBO = 0;
-            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFBO);
-            GLint prevReadFBO = 0;
-            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFBO);
-
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFBO);
-            glBlitFramebuffer(
-                0, 0, vw, vh,
-                dstX, dstY, dstX + (int)dstW, dstY + (int)dstH,
-                GL_COLOR_BUFFER_BIT, GL_LINEAR);
-
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)prevReadFBO);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)prevDrawFBO);
-            s_videoBlittedToFBO = true;
-        }
-    }
-#else
     // Submit the mpv frame as an aspect-fit quad on view 0. View 0 is
     // pointed at the CRT capture FBO (when CRT is on) or the backbuffer
     // (when off) by sdl_main.cpp's caller, so this lands exactly where
@@ -243,68 +164,12 @@ void MediaUI_DrawFullscreenVideo()
     bgfx::setViewRect(0, 0, 0, (uint16_t)dw, (uint16_t)dh);
     bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
 
-    float vAspect = (float)vw / (float)vh;
-    float wAspect = (float)dw / (float)dh;
-    float qw, qh; // half-extents in NDC
-    if (vAspect > wAspect) { qw = 1.0f; qh = wAspect / vAspect; }
-    else                   { qh = 1.0f; qw = vAspect / wAspect; }
-
-    bgfx::VertexLayout layout;
-    layout.begin()
-        .add(bgfx::Attrib::Position,  3, bgfx::AttribType::Float)
-        .add(bgfx::Attrib::Normal,    3, bgfx::AttribType::Float)
-        .add(bgfx::Attrib::Color0,    4, bgfx::AttribType::Uint8, true)
-        .add(bgfx::Attrib::Color1,    4, bgfx::AttribType::Uint8, true)
-        .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
-        .end();
-
-    struct V { float px, py, pz, nx, ny, nz; uint32_t c0, c1; float u, v; };
-    // Texture is written top-down (row 0 = visual top). NDC +1 Y = top
-    // of screen, so the top edge of the quad samples V=0. Matches the
-    // boot_anim blit's mapping.
-    V verts[4] = {
-        { -qw, -qh, 0.f, 0,0,0, 0,0, 0.f, 1.f },
-        {  qw, -qh, 0.f, 0,0,0, 0,0, 1.f, 1.f },
-        {  qw,  qh, 0.f, 0,0,0, 0,0, 1.f, 0.f },
-        { -qw,  qh, 0.f, 0,0,0, 0,0, 0.f, 0.f },
-    };
-    const uint16_t idx[6] = { 0, 1, 2, 0, 2, 3 };
-
-    bgfx::TransientVertexBuffer tvb;
-    bgfx::TransientIndexBuffer  tib;
-    if (bgfx::getAvailTransientVertexBuffer(4, layout) < 4) return;
-    if (bgfx::getAvailTransientIndexBuffer(6)            < 6) return;
-    bgfx::allocTransientVertexBuffer(&tvb, 4, layout);
-    memcpy(tvb.data, verts, sizeof(verts));
-    bgfx::allocTransientIndexBuffer(&tib, 6);
-    memcpy(tib.data, idx, sizeof(idx));
-
-    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-    bgfx::setTexture(0, g_bgfxSamplerBlit, vidTex);
-    bgfx::setVertexBuffer(0, &tvb, 0, 4);
-    bgfx::setIndexBuffer(&tib, 0, 6);
-    bgfx::submit(0, g_bgfxProgBlit);
+    float qw, qh;
+    Bgfx_AspectFitNDC(vw, vh, dw, dh, qw, qh);
+    Bgfx_BlitTexturedQuad(vidTex, qw, qh);
     s_videoBlittedToFBO = true;
-#endif
 }
 
-
-// Aspect-fit (vw,vh) inside (ww,wh) -> outX/Y/W/H letterbox rect.
-static void FitRect(int vw, int vh, int ww, int wh,
-                    float& outX, float& outY, float& outW, float& outH)
-{
-    float wAspect = (float)ww / (float)wh;
-    float vAspect = (float)vw / (float)vh;
-    if (vAspect > wAspect) {
-        outW = (float)ww;
-        outH = (float)ww / vAspect;
-    } else {
-        outH = (float)wh;
-        outW = (float)wh * vAspect;
-    }
-    outX = ((float)ww - outW) * 0.5f;
-    outY = ((float)wh - outH) * 0.5f;
-}
 
 
 // ============================================================================
@@ -335,9 +200,8 @@ void MediaUI_RenderOSD()
     if (!g_mediaFullscreen) return;
 
     // Use ImGui's display size (logical units) so chrome positions match
-    // the actual UI canvas on Retina/HiDPI screens. Drawable pixels
-    // (SDL_GL_GetDrawableSize) are 2x on Mac Retina and would push the
-    // overlay off-screen.
+    // the UI canvas on Retina/HiDPI, where the pixel size is 2x and would
+    // push the overlay off-screen.
     ImVec2 disp = ImGui::GetIO().DisplaySize;
     int ww = (int)disp.x;
     int wh = (int)disp.y;
@@ -376,15 +240,9 @@ void MediaUI_RenderOSD()
             // SW path writes the texture top-down (row 0 = visual top), so
             // no flip needed.
             ImDrawList* bg = ImGui::GetBackgroundDrawList();
-#ifndef THESEUS_USE_BGFX
-            bg->AddImage((ImTextureID)(intptr_t)tex,
-                ImVec2(dstX, dstY), ImVec2(dstX + dstW, dstY + dstH),
-                ImVec2(0, 1), ImVec2(1, 0));
-#else
             bg->AddImage((ImTextureID)(intptr_t)tex,
                 ImVec2(dstX, dstY), ImVec2(dstX + dstW, dstY + dstH),
                 ImVec2(0, 0), ImVec2(1, 1));
-#endif
         }
     }
 

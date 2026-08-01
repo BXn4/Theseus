@@ -30,7 +30,10 @@ jobs:
           submodules: recursive
 
       - name: Install deps
-        run: brew install sdl2 sdl2_mixer mpv curl pkg-config
+        # ffmpeg + opus: xCloud video/audio decode links libavcodec/swscale
+        # and libopus directly (hard deps of the desktop target).
+        # openssl@3 + cmake: needed to build libdatachannel below.
+        run: brew install sdl2 sdl2_mixer mpv curl pkg-config ffmpeg opus openssl@3 cmake
 
       - name: Stub Configs/Data/Library
         run: mkdir -p Configs Data Library
@@ -42,8 +45,21 @@ jobs:
           make -C .build/projects/gmake-osx-arm64 -j$(sysctl -n hw.ncpu) \
                bx bimg bgfx config=release
 
+      - name: Build libdatachannel
+        # xCloud's WebRTC transport. Without the static lib the Makefile
+        # leaves THESEUS_HAVE_WEBRTC undefined and we would ship a release
+        # binary with xCloud silently missing.
+        run: |
+          cmake -S theseus/third-party/libdatachannel \
+                -B theseus/third-party/libdatachannel/build-mac \
+                -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+                -DNO_WEBSOCKET=1 -DNO_EXAMPLES=1 -DNO_TESTS=1 \
+                -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          cmake --build theseus/third-party/libdatachannel/build-mac -j$(sysctl -n hw.ncpu)
+          test -f theseus/third-party/libdatachannel/build-mac/libdatachannel.a
+
       - name: Build
-        run: PKG_CONFIG_PATH="$(brew --prefix curl)/lib/pkgconfig:${PKG_CONFIG_PATH}" make -C build desktop BGFX=1
+        run: PKG_CONFIG_PATH="$(brew --prefix curl)/lib/pkgconfig:${PKG_CONFIG_PATH}" make -C build desktop
 
       - name: Package
         # macOS users are expected to have Homebrew SDL2/mpv/curl installed.
@@ -84,7 +100,8 @@ jobs:
           sudo apt install -y build-essential pkg-config cmake \
                               libsdl2-dev libsdl2-mixer-dev \
                               libvulkan-dev libx11-dev libgl-dev \
-                              libmpv-dev libcurl4-openssl-dev
+                              libmpv-dev libcurl4-openssl-dev libssl-dev \
+                              libavcodec-dev libavutil-dev libswscale-dev libopus-dev
 
       - name: Stub Configs/Data/Library
         run: mkdir -p Configs Data Library
@@ -96,8 +113,18 @@ jobs:
           make -C .build/projects/gmake-linux-gcc -j$(nproc) \
                bx bimg bgfx config=release64
 
+      - name: Build libdatachannel
+        # See the macOS job: no lib means xCloud quietly compiles out.
+        run: |
+          cmake -S theseus/third-party/libdatachannel \
+                -B theseus/third-party/libdatachannel/build-linux \
+                -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+                -DNO_WEBSOCKET=1 -DNO_EXAMPLES=1 -DNO_TESTS=1
+          cmake --build theseus/third-party/libdatachannel/build-linux -j$(nproc)
+          test -f theseus/third-party/libdatachannel/build-linux/libdatachannel.a
+
       - name: Build
-        run: make -C build desktop BGFX=1
+        run: make -C build desktop
 
       - name: Package
         run: |
@@ -133,7 +160,8 @@ jobs:
           sudo apt install -y build-essential pkg-config cmake \
                               libsdl2-dev libsdl2-mixer-dev \
                               libvulkan-dev libx11-dev libgl-dev \
-                              libmpv-dev libcurl4-openssl-dev
+                              libmpv-dev libcurl4-openssl-dev libssl-dev \
+                              libavcodec-dev libavutil-dev libswscale-dev libopus-dev
 
       - name: Stub Configs/Data/Library
         run: mkdir -p Configs Data Library
@@ -158,8 +186,18 @@ jobs:
           make -C .build/projects/gmake-linux-gcc -j$(nproc) \
                bx bimg bgfx config=release64
 
+      - name: Build libdatachannel
+        # See the macOS job: no lib means xCloud quietly compiles out.
+        run: |
+          cmake -S theseus/third-party/libdatachannel \
+                -B theseus/third-party/libdatachannel/build-linux \
+                -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+                -DNO_WEBSOCKET=1 -DNO_EXAMPLES=1 -DNO_TESTS=1
+          cmake --build theseus/third-party/libdatachannel/build-linux -j$(nproc)
+          test -f theseus/third-party/libdatachannel/build-linux/libdatachannel.a
+
       - name: Build
-        run: make -C build desktop BGFX=1
+        run: make -C build desktop
 
       - name: Package
         run: |
@@ -257,7 +295,7 @@ jobs:
                CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++
 
       - name: Build
-        run: make -C build desktop-win64 BGFX=1
+        run: make -C build desktop-win64
 
       - name: Package
         # The Makefile has already copied the runtime DLLs into the build

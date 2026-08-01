@@ -1,41 +1,21 @@
-// media_player.cpp: libmpv wrapper. mpv renders video to a private GL
-// FBO; we expose its color texture to media_ui.cpp for compositing.
+// media_player.cpp: libmpv wrapper. mpv software-renders each frame into a
+// CPU buffer that we upload to a bgfx texture; media_ui.cpp composites it.
 //
-// Each Play is a fresh mpv instance, each Stop is a full teardown.
-// Partial-stop strategies leave the render pipeline wedged on Apple
-// Silicon. s_fboWidth/Height tracks the actual FBO size, distinct from
-// s_videoWidth/Height (mpv's reported video native dims) so the
-// video-params event can't lie to EnsureFBO about FBO state.
+// Each Play is a fresh mpv instance, each Stop is a full teardown. Partial-
+// stop strategies leave the render pipeline wedged on Apple Silicon.
+// s_fboWidth/Height tracks the render-target size, distinct from
+// s_videoWidth/Height (mpv's reported native dims), so a video-params event
+// can't lie about the current buffer size.
 
 #include "media_player.h"
 
 #include <mpv/client.h>
 #include <mpv/render.h>
-#ifndef THESEUS_USE_BGFX
-#include <mpv/render_gl.h>
-#endif
 
 #include <SDL.h>
 
-#ifdef THESEUS_USE_BGFX
 #include <bgfx/bgfx.h>
 #include "d3d8_sdl.h"  // for g_bgfxProgBlit / g_bgfxSamplerBlit
-#else
-// OpenGL 3.2 Core Profile -- match d3d8_sdl.h's per-platform pattern.
-// Linux gl.h ships only the 1.x ABI; we need GL_GLEXT_PROTOTYPES + glext.h
-// to pick up framebuffer / shader / VAO entry points. Windows mingw goes
-// through GLEW because there's no equivalent prototype-on-demand mechanism.
-#ifdef __APPLE__
-#define GL_SILENCE_DEPRECATION
-#include <OpenGL/gl3.h>
-#elif defined(_WIN32)
-#include <GL/glew.h>
-#else
-#define GL_GLEXT_PROTOTYPES
-#include <GL/gl.h>
-#include <GL/glext.h>
-#endif
-#endif
 
 #include <cstdio>
 #include <cstring>
@@ -51,14 +31,9 @@ static mpv_render_context* s_mpvGL = nullptr;
 static MediaPlayerState    s_state = MP_IDLE;
 
 // Video FBO
-#ifndef THESEUS_USE_BGFX
-static GLuint s_fbo = 0;
-static GLuint s_videoTex = 0;
-#else
 static bgfx::TextureHandle s_bgfxTex = BGFX_INVALID_HANDLE;
 static uint8_t*            s_swBuf   = nullptr;  // libmpv SW render target
 static size_t              s_swBufSize = 0;
-#endif
 static int    s_videoWidth = 0;    // mpv-reported video native width
 static int    s_videoHeight = 0;   // mpv-reported video native height
 static int    s_fboWidth = 0;      // size we created the render FBO at
@@ -71,7 +46,6 @@ static double s_position = 0.0;
 static double s_duration = 0.0;
 static double s_speed = 1.0;
 static int    s_chapter = 0;
-static int    s_chapterCount = 0;
 
 // A-B loop state
 static int    s_abRepeatState = 0;  // 0=off, 1=A set, 2=A-B active
@@ -91,41 +65,15 @@ static int    s_subTrack = 0;
 
 static void EnsureRenderTarget(int w, int h) {
     if (s_fboWidth == w && s_fboHeight == h) {
-#ifndef THESEUS_USE_BGFX
-        if (s_fbo) return;
-#else
         if (bgfx::isValid(s_bgfxTex) && s_swBuf) return;
-#endif
     }
 
-#ifndef THESEUS_USE_BGFX
-    if (s_fbo)      glDeleteFramebuffers(1, &s_fbo);
-    if (s_videoTex) glDeleteTextures(1, &s_videoTex);
-#else
     if (bgfx::isValid(s_bgfxTex)) { bgfx::destroy(s_bgfxTex); s_bgfxTex = BGFX_INVALID_HANDLE; }
     if (s_swBuf) { std::free(s_swBuf); s_swBuf = nullptr; s_swBufSize = 0; }
-#endif
 
     s_fboWidth  = w;
     s_fboHeight = h;
 
-#ifndef THESEUS_USE_BGFX
-    // Create texture - use rgba16f to match mpv's preferred format
-    glGenTextures(1, &s_videoTex);
-    glBindTexture(GL_TEXTURE_2D, s_videoTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glGenFramebuffers(1, &s_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, s_fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_videoTex, 0);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-    fprintf(stderr, "[MediaPlayer] Created video FBO: %dx%d\n", w, h);
-#else
     s_swBufSize = (size_t)w * (size_t)h * 4;
     s_swBuf = (uint8_t*)std::calloc(1, s_swBufSize);
     s_bgfxTex = bgfx::createTexture2D(
@@ -133,20 +81,12 @@ static void EnsureRenderTarget(int w, int h) {
         bgfx::TextureFormat::BGRA8,
         BGFX_TEXTURE_NONE | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
     fprintf(stderr, "[MediaPlayer] Created bgfx video tex: %dx%d\n", w, h);
-#endif
 }
 
 // mpv render callback: called when a new frame is available
 static void OnMpvRenderUpdate(void* ctx) {
     s_needsRender = true;
 }
-
-#ifndef THESEUS_USE_BGFX
-// mpv GL get_proc_address callback
-static void* GetProcAddress(void* ctx, const char* name) {
-    return (void*)SDL_GL_GetProcAddress(name);
-}
-#endif
 
 // ============================================================================
 // Init / Shutdown
@@ -162,7 +102,7 @@ bool MediaPlayer_Init() {
 
     // Set options before init
     extern bool g_hwdec;
-    mpv_set_option_string(s_mpv, "vo", "libmpv");       // render to our FBO, not a window
+    mpv_set_option_string(s_mpv, "vo", "libmpv");       // render into our buffer, not a window
     mpv_set_option_string(s_mpv, "hwdec", g_hwdec ? "auto" : "no");
     mpv_set_option_string(s_mpv, "keep-open", "yes");
     mpv_set_option_string(s_mpv, "video", "yes");
@@ -177,24 +117,12 @@ bool MediaPlayer_Init() {
         return false;
     }
 
-#ifndef THESEUS_USE_BGFX
-    // Create OpenGL render context
-    mpv_opengl_init_params gl_init = { GetProcAddress, nullptr };
-    int advanced = 1;
-    mpv_render_param params[] = {
-        { MPV_RENDER_PARAM_API_TYPE, (void*)MPV_RENDER_API_TYPE_OPENGL },
-        { MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init },
-        { MPV_RENDER_PARAM_ADVANCED_CONTROL, &advanced },
-        { MPV_RENDER_PARAM_INVALID, nullptr }
-    };
-#else
     // Software render: mpv decodes into a CPU buffer we supply per-frame,
     // we upload to a bgfx texture. No GL context needed.
     mpv_render_param params[] = {
         { MPV_RENDER_PARAM_API_TYPE, (void*)MPV_RENDER_API_TYPE_SW },
         { MPV_RENDER_PARAM_INVALID,  nullptr }
     };
-#endif
 
     if (mpv_render_context_create(&s_mpvGL, s_mpv, params) < 0) {
         fprintf(stderr, "[MediaPlayer] mpv_render_context_create() failed\n");
@@ -210,7 +138,6 @@ bool MediaPlayer_Init() {
     mpv_observe_property(s_mpv, 0, "duration", MPV_FORMAT_DOUBLE);
     mpv_observe_property(s_mpv, 0, "speed", MPV_FORMAT_DOUBLE);
     mpv_observe_property(s_mpv, 0, "chapter", MPV_FORMAT_INT64);
-    mpv_observe_property(s_mpv, 0, "chapter-list/count", MPV_FORMAT_INT64);
     mpv_observe_property(s_mpv, 0, "video-params/w", MPV_FORMAT_INT64);
     mpv_observe_property(s_mpv, 0, "video-params/h", MPV_FORMAT_INT64);
     mpv_observe_property(s_mpv, 0, "audio-params/channel-count", MPV_FORMAT_INT64);
@@ -218,7 +145,7 @@ bool MediaPlayer_Init() {
     mpv_observe_property(s_mpv, 0, "sid", MPV_FORMAT_INT64);
 
     s_state = MP_IDLE;
-    fprintf(stderr, "[MediaPlayer] Initialized (libmpv + OpenGL render)\n");
+    fprintf(stderr, "[MediaPlayer] Initialized (libmpv software render + bgfx upload)\n");
     return true;
 }
 
@@ -231,13 +158,8 @@ void MediaPlayer_Shutdown() {
         mpv_destroy(s_mpv);
         s_mpv = nullptr;
     }
-#ifndef THESEUS_USE_BGFX
-    if (s_fbo) { glDeleteFramebuffers(1, &s_fbo); s_fbo = 0; }
-    if (s_videoTex) { glDeleteTextures(1, &s_videoTex); s_videoTex = 0; }
-#else
     if (bgfx::isValid(s_bgfxTex)) { bgfx::destroy(s_bgfxTex); s_bgfxTex = BGFX_INVALID_HANDLE; }
     if (s_swBuf) { std::free(s_swBuf); s_swBuf = nullptr; s_swBufSize = 0; }
-#endif
     s_state = MP_IDLE;
     fprintf(stderr, "[MediaPlayer] Shutdown\n");
 }
@@ -309,13 +231,8 @@ void MediaPlayer_Stop() {
         mpv_destroy(s_mpv);
         s_mpv = nullptr;
     }
-#ifndef THESEUS_USE_BGFX
-    if (s_fbo)      { glDeleteFramebuffers(1, &s_fbo); s_fbo = 0; }
-    if (s_videoTex) { glDeleteTextures(1, &s_videoTex); s_videoTex = 0; }
-#else
     if (bgfx::isValid(s_bgfxTex)) { bgfx::destroy(s_bgfxTex); s_bgfxTex = BGFX_INVALID_HANDLE; }
     if (s_swBuf) { std::free(s_swBuf); s_swBuf = nullptr; s_swBufSize = 0; }
-#endif
     s_state       = MP_IDLE;
     s_position    = 0.0;
     s_duration    = 0.0;
@@ -356,7 +273,6 @@ void MediaPlayer_PrevChapter() {
 }
 
 int MediaPlayer_GetChapter() { return s_chapter; }
-int MediaPlayer_GetChapterCount() { return s_chapterCount; }
 
 void MediaPlayer_NextAudioTrack() {
     if (!s_mpv) return;
@@ -464,8 +380,6 @@ void MediaPlayer_Update() {
                     s_speed = *(double*)prop->data;
                 else if (strcmp(prop->name, "chapter") == 0 && prop->format == MPV_FORMAT_INT64)
                     s_chapter = (int)*(int64_t*)prop->data;
-                else if (strcmp(prop->name, "chapter-list/count") == 0 && prop->format == MPV_FORMAT_INT64)
-                    s_chapterCount = (int)*(int64_t*)prop->data;
                 else if (strcmp(prop->name, "video-params/w") == 0 && prop->format == MPV_FORMAT_INT64) {
                     int w = (int)*(int64_t*)prop->data;
                     if (w > 0) { s_hasVideo = true; s_videoWidth = w; }
@@ -514,51 +428,6 @@ void MediaPlayer_Update() {
         EnsureRenderTarget(w, h);
         s_hasVideo = true;
 
-#ifndef THESEUS_USE_BGFX
-        // Save current GL state and reset to defaults for mpv
-        GLint prevFBO, prevViewport[4], prevProg, prevVAO, prevTex;
-        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
-        glGetIntegerv(GL_VIEWPORT, prevViewport);
-        glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
-        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
-        glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
-
-        // Reset GL state to defaults (mpv expects clean state)
-        glUseProgram(0);
-        glBindVertexArray(0);
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-        glDisable(GL_SCISSOR_TEST);
-        glDisable(GL_BLEND);
-        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        glDepthMask(GL_TRUE);
-        glDisable(GL_CULL_FACE);
-        glActiveTexture(GL_TEXTURE0);
-
-        mpv_opengl_fbo fbo_params = {
-            (int)s_fbo,
-            w, h,
-            0  // internal format
-        };
-
-        int flip = 1;
-        mpv_render_param render_params[] = {
-            { MPV_RENDER_PARAM_OPENGL_FBO, &fbo_params },
-            { MPV_RENDER_PARAM_FLIP_Y, &flip },
-            { MPV_RENDER_PARAM_INVALID, nullptr }
-        };
-
-        mpv_render_context_render(s_mpvGL, render_params);
-        // Don't call report_swap - it causes mpv to clear the FBO
-
-        // Restore GL state
-        glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
-        glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
-        glUseProgram(prevProg);
-        glBindVertexArray(prevVAO);
-        glBindTexture(GL_TEXTURE_2D, prevTex);
-#else
         // Software render path: ask mpv to write directly into our CPU
         // buffer, then upload to the bgfx texture for sampling by
         // MediaPlayer_RenderToScreen / consumer fullscreen blits.
@@ -580,76 +449,21 @@ void MediaPlayer_Update() {
                     bgfx::copy(s_swBuf, (uint32_t)s_swBufSize));
             }
         }
-#endif
     }
 }
 
 unsigned int MediaPlayer_GetVideoTexture(int* outWidth, int* outHeight) {
-#ifndef THESEUS_USE_BGFX
-    if (!s_hasVideo || !s_videoTex) return 0;
-    // Return FBO dims (what the texture *actually contains*), not the
-    // mpv-reported video native dims. If those drift apart (e.g. we
-    // created the FBO before video-params arrived), reading past FBO
-    // extent gives garbage in the blit.
-    if (outWidth)  *outWidth  = s_fboWidth;
-    if (outHeight) *outHeight = s_fboHeight;
-    return s_videoTex;
-#else
-    // bgfx mode: consumers can't access the texture as a GL handle.
-    // They should call MediaPlayer_RenderToScreen instead. The chunk
-    // 5d-3+ video-display path under BGFX is fullscreen-only.
+    // Returns the bgfx texture handle, not a GL handle. Fullscreen video
+    // display goes through MediaPlayer_RenderToScreen.
     if (outWidth)  *outWidth  = s_fboWidth;
     if (outHeight) *outHeight = s_fboHeight;
     return s_hasVideo && bgfx::isValid(s_bgfxTex) ? (unsigned int)s_bgfxTex.idx : 0;
-#endif
-}
-
-unsigned int MediaPlayer_GetFBO() {
-#ifndef THESEUS_USE_BGFX
-    return s_fbo;
-#else
-    // No FBO concept under bgfx. Consumers must use RenderToScreen.
-    return 0;
-#endif
 }
 
 void MediaPlayer_RenderToScreen(int screenW, int screenH) {
-#ifndef THESEUS_USE_BGFX
-    if (!s_mpvGL) return;
-
-    // Render to whatever FBO is currently bound (CRT capture FBO or screen)
-    GLint currentFBO;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &currentFBO);
-
-    mpv_opengl_fbo fbo_params = {
-        (int)currentFBO,
-        screenW, screenH,
-        0
-    };
-
-    int flip = 1;
-    mpv_render_param render_params[] = {
-        { MPV_RENDER_PARAM_OPENGL_FBO, &fbo_params },
-        { MPV_RENDER_PARAM_FLIP_Y, &flip },
-        { MPV_RENDER_PARAM_INVALID, nullptr }
-    };
-
-    // Save and restore GL state
-    GLint prevFBO; glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
-    GLint prevViewport[4]; glGetIntegerv(GL_VIEWPORT, prevViewport);
-
-    mpv_render_context_render(s_mpvGL, render_params);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
-    glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
-#else
-    // bgfx mode: video display goes through ImGui::AddImage in
-    // media_ui.cpp (mirror of the GL build's path), with flipped UVs
-    // to compensate for the texture's orientation. Nothing to submit
-    // here -- MediaPlayer_GetVideoTexture exposes the bgfx handle and
-    // ImGui's bgfx backend handles the rendering.
+    // Nothing to submit here: MediaPlayer_GetVideoTexture hands the bgfx
+    // texture to media_ui.cpp, which draws it via ImGui::AddImage.
     (void)screenW; (void)screenH;
-#endif
 }
 
 // ============================================================================

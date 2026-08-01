@@ -77,14 +77,6 @@ extern bool g_desktopRestartRequested;
 extern bool g_desktopRestartMuted;
 
 // ============================================================================
-// Window Management (defined in sdl_main.cpp)
-// ============================================================================
-
-extern SDL_Window* g_pXapEditorWindow;
-void CreateXapEditorWindow();
-void DestroyXapEditorWindow();
-
-// ============================================================================
 // Settings I/O (defined in sdl_main.cpp)
 // ============================================================================
 

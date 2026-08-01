@@ -9,7 +9,7 @@
 #include "date_node.h"
 #include "locale_node.h"
 #ifdef _XBOX
-#include "xconfig.h"
+#include "../xbox/xbox_private_types.h"
 #endif
 
 extern CObject** g_rgParam;
