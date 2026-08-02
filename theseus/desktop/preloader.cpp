@@ -2,6 +2,7 @@
 // boot splash and unpacks bundled XIP archives into xboxfs/ on first
 // run. Desktop-only.
 
+#include "display.h"
 #include "app_paths.h"
 #include "preloader.h"
 #include "std.h"
@@ -576,7 +577,11 @@ bool RunPreloader(SDL_Window* window) {
 
         // Render
         ImGui::Render();
-        bgfx::setViewRect(0, 0, 0, (uint16_t)winW, (uint16_t)winH);
+        // Pixels here; winW/winH are points and drive the ImGui layout above.
+        int pw = 0, ph = 0;
+        Plat_GetDrawableSize(&pw, &ph);
+        if (pw <= 0 || ph <= 0) { pw = winW; ph = winH; }
+        bgfx::setViewRect(0, 0, 0, (uint16_t)pw, (uint16_t)ph);
         bgfx::setViewClear(0, BGFX_CLEAR_COLOR,
                            (uint32_t)((5<<24) | (8<<16) | (5<<8) | 0xFF),
                            1.0f, 0);
