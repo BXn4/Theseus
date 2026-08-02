@@ -709,6 +709,8 @@ DESKTOP_SRCS_SYSTEM = \
 DESKTOP_SRCS_PLATFORM = \
 	$(THESEUS_SRC)/desktop/sdl_main.cpp \
 	$(THESEUS_SRC)/desktop/launch.cpp \
+	$(THESEUS_SRC)/desktop/app_paths.cpp \
+	$(THESEUS_SRC)/desktop/osk.cpp \
 	$(THESEUS_SRC)/desktop/path_template.cpp \
 	$(THESEUS_SRC)/desktop/launchers/registry.cpp \
 	$(THESEUS_SRC)/desktop/launchers/steam.cpp \

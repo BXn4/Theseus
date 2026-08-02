@@ -115,6 +115,10 @@ protected:
 
 SDL_GameController* CJoystick::c_controller = NULL;
 
+// The keyboard reads the pad itself while up: nav is off for the duration,
+// so ImGui's key state isn't fed.
+SDL_GameController* Joy_GetController() { return CJoystick::c_controller; }
+
 CJoystick *CJoystick::c_pBoundJoystick = NULL;
 CJoystick *CJoystick::c_pPreviousBoundJoystick = NULL;
 
@@ -372,6 +376,10 @@ void CJoystick::EnableGlobalInput(int bEnable)
 void CJoystick::PollSDL(SDL_GameController* gc, JoySnapshot* out)
 {
     memset(out, 0, sizeof(*out));
+
+    // Tools have the pad: leave it zeroed and the dashboard sits still.
+    extern bool ImGui_OwnsPad();
+    if (ImGui_OwnsPad()) return;
 
     // --- Physical controller ---
     if (gc)

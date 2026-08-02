@@ -1,5 +1,6 @@
 // Named playlists stored in Configs/playlists.ini.
 
+#include "app_paths.h"
 #include "playlist.h"
 #include "xboxfs_drive.h"
 
@@ -8,7 +9,7 @@
 
 static std::vector<Playlist> s_playlists;
 static bool                  s_dirty = false;
-static const char* kPath = "Configs/playlists.ini";
+#define kPath AppPath("Configs/playlists.ini")
 
 bool Playlist_IsDirty() { return s_dirty; }
 

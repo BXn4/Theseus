@@ -11,6 +11,7 @@
 // DisplayPos / DisplaySize. Each ImDrawCmd is a setScissor + draw of
 // (ElemCount) indices at (IdxOffset, VtxOffset).
 
+#include "app_paths.h"
 #include "imgui_impl_bgfx.h"
 #include "imgui.h"
 
@@ -37,7 +38,13 @@ static BgfxImguiBackend g_bd;
 // via a header; same pattern.
 static bgfx::ShaderHandle LoadShader(const char* name)
 {
+#if defined(_WIN32)
+	const char* sub = "dx11";
+#elif defined(__APPLE__)
 	const char* sub = "metal";
+#else
+	const char* sub = "spirv";
+#endif
 	switch (bgfx::getRendererType()) {
 		case bgfx::RendererType::Direct3D11: sub = "dx11";  break;
 		case bgfx::RendererType::Metal:      sub = "metal"; break;
@@ -46,7 +53,7 @@ static bgfx::ShaderHandle LoadShader(const char* name)
 		default: break;
 	}
 	char path[512];
-	snprintf(path, sizeof(path), "Data/shaders/%s/%s.bin", sub, name);
+	snprintf(path, sizeof(path), "%s", AppPathf("Data/shaders/%s/%s.bin", sub, name));
 	FILE* f = fopen(path, "rb");
 	if (!f) {
 		fprintf(stderr, "imgui_impl_bgfx: shader not found: %s\n", path);

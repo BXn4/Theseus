@@ -76,6 +76,24 @@ jobs:
           zip -r "${DROP}.zip" "${DROP}"
           echo "ARCHIVE=${DROP}.zip" >> "$GITHUB_ENV"
 
+      - name: Package .app
+        # Self contained bundle: brew dylibs copied in and their install names
+        # rewritten to @rpath, so it runs without a matching brew layout.
+        # Ad-hoc signed, which is enough to run but not to hand around
+        # unnotarized: Gatekeeper still wants a right click Open.
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          chmod +x build/mk-macapp.sh
+          ./build/mk-macapp.sh
+          ditto -c -k --keepParent ~/builds/theseus/Theseus.app "Theseus-${TAG}-macos-app.zip"
+          echo "APPZIP=Theseus-${TAG}-macos-app.zip" >> "$GITHUB_ENV"
+
+      - name: Upload .app to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: ${{ env.APPZIP }}
+
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
@@ -136,6 +154,22 @@ jobs:
           if [ -d ~/builds/theseus/desktop/lib ]; then cp -R ~/builds/theseus/desktop/lib "${DROP}/lib"; fi
           tar czf "${DROP}.tar.gz" "${DROP}"
           echo "ARCHIVE=${DROP}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package AppImage
+        # One file for Debian and Arch alike, so the exclusion list in the
+        # script only names libraries both actually ship.
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          sudo apt-get install -y -qq patchelf wget file
+          chmod +x build/mk-appimage.sh
+          ./build/mk-appimage.sh ~/builds/theseus/desktop "UIX-Desktop-${TAG}-x86_64.AppImage"
+          echo "APPIMAGE=UIX-Desktop-${TAG}-x86_64.AppImage" >> "$GITHUB_ENV"
+
+      - name: Upload AppImage to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: ${{ env.APPIMAGE }}
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2

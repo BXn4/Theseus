@@ -76,6 +76,7 @@ D3DPRESENT_PARAMETERS g_pp = {};
 float             g_nViewWidth = 0;
 float             g_nViewHeight = 0;
 bool              g_bStretchWidescreen = false;
+bool              g_bEmulateXboxRes = true; // default on so existing XIPs keep working
 bool              g_bZBuffer = false;
 bool              g_bProjectionDirty = true;
 ID3DXMatrixStack* g_worldStack = NULL;

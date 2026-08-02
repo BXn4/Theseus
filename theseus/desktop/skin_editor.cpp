@@ -1,5 +1,6 @@
 // skin_editor.cpp: see skin_editor.h.
 
+#include "app_paths.h"
 #include "std.h"
 #include "dashapp.h"
 #include "theseus.h"
@@ -73,7 +74,7 @@ static std::string PickFile() {
 static std::string ApplyAssetPick(const std::string& srcPath, const char* slotName) {
     if (IsStockReadOnly()) return "Stock is read-only. Use 'New from Stock' first.";
     if (srcPath.empty() || !slotName || !*slotName) return "Nothing picked.";
-    fs::path skinDir = fs::path("Data/Skins") / g_currentSkin;
+    fs::path skinDir = fs::path(AppPath_Tree("Data/Skins")) / g_currentSkin;
     std::error_code ec;
     if (!fs::is_directory(skinDir, ec))
         return "Active skin folder is missing.";
@@ -91,7 +92,7 @@ static std::string ApplyAssetPick(const std::string& srcPath, const char* slotNa
 
 bool g_skinEditorOpen = false;
 
-static const char* kSkinsRoot = "Data/Skins";
+#define kSkinsRoot AppPath_Tree("Data/Skins")
 
 // Stock is the canonical reference skin. Refuse to overwrite it so users
 // don't trash the fallback by accident. They have to "New from Stock"

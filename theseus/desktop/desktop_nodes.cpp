@@ -4,6 +4,7 @@
 // real SDL_mixer-backed implementations; the rest are stubs that
 // keep XAP scripts resolving.
 
+#include "app_paths.h"
 #include "std.h"
 #ifdef _WIN32
 #include <io.h>
@@ -40,7 +41,7 @@ static const char* ResolveAudioURL(const TCHAR* url)
 	}
 
 	// Relative path; prepend Data/
-	snprintf(s_path, sizeof(s_path), "Data/%s", url);
+	snprintf(s_path, sizeof(s_path), "%s", AppPathf("Data/%s", url));
 	// Convert backslashes
 	for (char* p = s_path; *p; p++)
 		if (*p == '\\') *p = '/';
@@ -1794,7 +1795,7 @@ static void EnumerateTitles()
 	if (EnumerateTitlesFromFATX()) return;
 
 	// Fall back to xboxfs host directory
-	const char* udataPath = "Library/UDATA";
+	const char* udataPath = AppPath_Tree("Library/UDATA");
 
 	// Helper lambda: process a single title directory entry
 	auto ProcessTitleEntry = [&](const char* entName) {
@@ -1826,13 +1827,13 @@ static void EnumerateTitles()
 		} else {
 			// Synthetic UDATA entries fall back to Configs/icons/<TitleID>.
 			// xboxfs.h's C: routing maps "C:\icons\..." -> "Configs/icons/...".
-			snprintf(hostProbe, sizeof(hostProbe), "Configs/icons/%s.jpg", entName);
+			snprintf(hostProbe, sizeof(hostProbe), "%s", AppPathf("Configs/icons/%s.jpg", entName));
 			if (access(hostProbe, F_OK) == 0) {
 				snprintf(title.imagePath, sizeof(title.imagePath),
 				         "C:\\icons\\%s.jpg", entName);
 				title.hasImage = true;
 			} else {
-				snprintf(hostProbe, sizeof(hostProbe), "Configs/icons/%s.png", entName);
+				snprintf(hostProbe, sizeof(hostProbe), "%s", AppPathf("Configs/icons/%s.png", entName));
 				if (access(hostProbe, F_OK) == 0) {
 					snprintf(title.imagePath, sizeof(title.imagePath),
 					         "C:\\icons\\%s.png", entName);
@@ -1991,11 +1992,11 @@ static void LoadDesktopIcons()
 
 		// Check if icon file exists
 		char iconPath[512];
-		snprintf(iconPath, sizeof(iconPath), "Configs/icons/%s.jpg", g_vgames.games[i].titleID);
+		snprintf(iconPath, sizeof(iconPath), "%s", AppPathf("Configs/icons/%s.jpg", g_vgames.games[i].titleID));
 		struct stat _ist;
 		if (stat(iconPath, &_ist) != 0) {
 			// Try .png
-			snprintf(iconPath, sizeof(iconPath), "Configs/icons/%s.png", g_vgames.games[i].titleID);
+			snprintf(iconPath, sizeof(iconPath), "%s", AppPathf("Configs/icons/%s.png", g_vgames.games[i].titleID));
 			if (stat(iconPath, &_ist) != 0) continue;
 		}
 
@@ -2132,7 +2133,7 @@ public:
 				         t.titleID, t.saves[i].folderName);
 				// Check if save-specific image exists, fall back to title root
 				char hostPath[512];
-				snprintf(hostPath, sizeof(hostPath), "Library/UDATA/%s/%s/SaveImage.xbx",
+				snprintf(hostPath, sizeof(hostPath), "%s/UDATA/%s/%s/SaveImage.xbx", AppPath_Tree("Library"),
 				         t.titleID, t.saves[i].folderName);
 				struct stat _st;
 				if (stat(hostPath, &_st) != 0) {

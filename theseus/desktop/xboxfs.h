@@ -1,13 +1,7 @@
-// xboxfs.h: desktop drive-letter to host-path translation. Maps
-// Xbox-style paths onto three top-level runtime folders that live next
-// to the binary:
-//
-//   C:\UIX Configs\foo   -> Configs/foo
-//   C:\foo               -> Configs/foo (e.g. C:\version)
-//   Q:\foo               -> Data/foo
-//   E:\foo               -> Library/foo
-//   F:\, G:\, R:\, etc.  -> not found (only one library partition on desktop;
-//                           XAP scripts that iterate drives just see empty)
+// Desktop drive letter to host path translation. C: lands in Configs,
+// Q: in Data, E: in Library, all under the user data dir. F:, G:, R: and
+// friends have no analog and come back empty, so XAP scripts that iterate
+// drives just see nothing.
 //
 // Xbox build is unaffected: it uses real C:/Q:/E: drives via XTL.
 
@@ -25,6 +19,7 @@
 #include "virtual_games.h"
 
 #include "xboxfs_drive.h"  // XboxFS_DriveToPrefix shared helper
+#include "path_ci.h"       // Plat_ResolveCaseInsensitive
 
 // Case-insensitive path resolution (Xbox FATX is case-insensitive).
 // Walks each path component and matches against actual directory entries.
@@ -33,113 +28,7 @@
 // prefix, then re-attach the wildcard so callers like FindFirstFile keep
 // working on case-sensitive Linux filesystems.
 inline bool XboxFS_ResolveCaseInsensitive(char* resolvedPath, size_t maxLen) {
-    struct stat st;
-    if (stat(resolvedPath, &st) == 0)
-        return true;
-
-    char tempPath[512];
-    strncpy(tempPath, resolvedPath, sizeof(tempPath) - 1);
-    tempPath[sizeof(tempPath) - 1] = '\0';
-
-    // If the last component is a wildcard pattern, save it and resolve
-    // only the directory prefix.
-    char savedWildcard[64] = "";
-    char* lastSlash = strrchr(tempPath, '/');
-    if (lastSlash) {
-        const char* tail = lastSlash + 1;
-        if (strchr(tail, '*') || strchr(tail, '?')) {
-            strncpy(savedWildcard, tail, sizeof(savedWildcard) - 1);
-            savedWildcard[sizeof(savedWildcard) - 1] = '\0';
-            *lastSlash = '\0';
-        }
-    }
-
-    char* components[32];
-    int nComponents = 0;
-
-    char* tok = strtok(tempPath, "/");
-    while (tok && nComponents < 32) {
-        components[nComponents++] = tok;
-        tok = strtok(NULL, "/");
-    }
-
-    // Rebuild path, matching each component case-insensitively
-    char rebuilt[512];
-    rebuilt[0] = '\0';
-
-    for (int i = 0; i < nComponents; i++) {
-        const char* wanted = components[i];
-
-        // Try exact match first
-        char candidate[512];
-        if (rebuilt[0])
-            snprintf(candidate, sizeof(candidate), "%s/%s", rebuilt, wanted);
-        else
-            snprintf(candidate, sizeof(candidate), "%s", wanted);
-
-        if (stat(candidate, &st) == 0) {
-            strcpy(rebuilt, candidate);
-            continue;
-        }
-
-        // Scan directory for case-insensitive match
-        const char* dirToScan = rebuilt[0] ? rebuilt : ".";
-        bool found = false;
-#ifdef _WIN32
-        char searchBuf[512];
-        snprintf(searchBuf, sizeof(searchBuf), "%s/*", dirToScan);
-        struct _finddata_t fd;
-        intptr_t hFind = _findfirst(searchBuf, &fd);
-        if (hFind != -1) {
-            do {
-                if (_stricmp(fd.name, wanted) == 0) {
-                    if (rebuilt[0])
-                        snprintf(candidate, sizeof(candidate), "%s/%s", rebuilt, fd.name);
-                    else
-                        snprintf(candidate, sizeof(candidate), "%s", fd.name);
-                    strcpy(rebuilt, candidate);
-                    found = true;
-                    break;
-                }
-            } while (_findnext(hFind, &fd) == 0);
-            _findclose(hFind);
-        }
-#else
-        DIR* dir = opendir(dirToScan);
-        if (!dir)
-            return false;
-
-        struct dirent* entry;
-        while ((entry = readdir(dir)) != NULL) {
-            if (strcasecmp(entry->d_name, wanted) == 0) {
-                if (rebuilt[0])
-                    snprintf(candidate, sizeof(candidate), "%s/%s", rebuilt, entry->d_name);
-                else
-                    snprintf(candidate, sizeof(candidate), "%s", entry->d_name);
-                strcpy(rebuilt, candidate);
-                found = true;
-                break;
-            }
-        }
-        closedir(dir);
-#endif
-
-        if (!found)
-            return false;
-    }
-
-    // Re-attach a trailing wildcard, if one was peeled off.
-    if (savedWildcard[0]) {
-        size_t rl = strlen(rebuilt);
-        if (rl + 1 + strlen(savedWildcard) < sizeof(rebuilt)) {
-            if (rl) { rebuilt[rl++] = '/'; rebuilt[rl] = '\0'; }
-            strncat(rebuilt, savedWildcard, sizeof(rebuilt) - rl - 1);
-        }
-    }
-
-    strncpy(resolvedPath, rebuilt, maxLen - 1);
-    resolvedPath[maxLen - 1] = '\0';
-    return true;
+    return Plat_ResolveCaseInsensitive(resolvedPath, maxLen);
 }
 
 // Translate an Xbox-style path to a local path
@@ -212,7 +101,7 @@ inline const char* XboxFS_TranslatePath(const char* xboxPath) {
                         (rest[uixLen] == '\\' || rest[uixLen] == '/')) {
                         rest += uixLen + 1;
                     }
-                    prefix = "Configs";
+                    prefix = AppPath_Tree("Configs");
                 } else {
                     prefix = XboxFS_DriveToPrefix(drive[0]);
                 }
@@ -222,7 +111,7 @@ inline const char* XboxFS_TranslatePath(const char* xboxPath) {
                 // Library/Music fallback (the desktop's [Library] MusicRoot
                 // setting in desktop.ini is consumed separately by
                 // CMediaCollection / DashMusic_Scan).
-                prefix = "Library/Music";
+                prefix = AppPath_Tree("Library/Music");
             }
 
             if (!prefix) {
@@ -253,8 +142,10 @@ inline const char* XboxFS_TranslatePath(const char* xboxPath) {
             // roots, etc., so XAP code that calls
             // CSettingsFile::Open("Q:\\System\\Config.ini") reads + writes
             // through the same source-of-truth file.
-            if (strcasecmp(s_buf, "Data/System/config.ini") == 0) {
-                strncpy(s_buf, "Configs/desktop.ini", sizeof(s_buf) - 1);
+            char sysCfg[512];
+            snprintf(sysCfg, sizeof(sysCfg), "%s/System/config.ini", AppPath_Tree("Data"));
+            if (strcasecmp(s_buf, sysCfg) == 0) {
+                strncpy(s_buf, AppPath("Configs/desktop.ini"), sizeof(s_buf) - 1);
                 s_buf[sizeof(s_buf) - 1] = '\0';
             }
 

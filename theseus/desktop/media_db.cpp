@@ -3,6 +3,7 @@
 // and exposes CMediaCollection / CPlaylistCollection to XAP. Split out of
 // desktop_nodes.cpp.
 
+#include "app_paths.h"
 #include "std.h"
 #include "dashapp.h"
 #include "node.h"
@@ -33,7 +34,7 @@
 // Library roots come from desktop.ini globals (loaded by sdl_main.cpp).
 // Empty by default; user configures via Settings -> Media Library tab.
 // The scan no-ops on empty paths. no library shown until configured.
-static const char* kCachePath = "Library/MediaDB.cache";
+#define kCachePath AppPath("Library/MediaDB.cache")
 
 extern char g_moviesRoot[512];
 extern char g_tvRoot[512];

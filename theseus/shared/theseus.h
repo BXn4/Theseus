@@ -103,6 +103,9 @@ extern D3DPRESENT_PARAMETERS g_pp;
 extern float g_nViewWidth;
 extern float g_nViewHeight;
 extern bool g_bStretchWidescreen;
+// Scene runs in the Xbox 720x480 design space. Always on for the console;
+// a user setting on desktop, where off means the real window aspect.
+extern bool g_bEmulateXboxRes;
 
 // Render state
 extern bool g_bZBuffer;
@@ -171,6 +174,7 @@ inline XTIME TheseusGetNow() { return g_now; }
 inline float TheseusGetViewWidth() { return g_nViewWidth; }
 inline float TheseusGetViewHeight() { return g_nViewHeight; }
 inline bool TheseusGetStretchWidescreen() { return g_bStretchWidescreen; }
+inline bool TheseusGetEmulateXboxRes() { return g_bEmulateXboxRes; }
 inline void TheseusSetProjectionDirty() { g_bProjectionDirty = true; }
 inline CBackground* TheseusGetBackground() { return g_pBackground; }
 inline void TheseusSetBackground(CBackground* p) { g_pBackground = p; }

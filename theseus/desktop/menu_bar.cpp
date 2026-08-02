@@ -3,6 +3,7 @@
 
 #include "std.h"
 #include "dashapp.h"
+#include "app_paths.h"
 #include "panel_shared.h"
 #include "title_maker.h"
 #include "hdd_browser.h"
@@ -14,6 +15,8 @@
 #include "xcloud_client.h"
 #include "media_player.h"
 #include "milkdrop_window.h"
+#include "xbox_buttons.h"
+#include "stb_image.h"
 
 extern bool  g_bWireframe;
 extern float g_masterVolume;
@@ -21,6 +24,7 @@ extern float g_masterVolume;
 #include <cstdio>
 #include <cstring>
 #include <sys/stat.h>
+#include <cfloat>
 
 extern "C" void MediaDB_ScanAndCache();
 extern "C" void MediaDB_RefreshMovies();
@@ -135,6 +139,258 @@ static int GetMSAAIndex() {
 // Menu Bar
 // ============================================================================
 
+// Controller Menu. ImGui nav needs a focusable window to land on, and the
+// menu bar isn't one: it leaves NavActive at 0 and the stick does nothing.
+void RenderControllerMenu() {
+    extern bool g_padModeActive;
+    if (!g_padModeActive) return;
+
+    extern bool g_playlistMakerOpen;
+    struct Entry { const char* label; bool* flag; const char* desc; const char* win; };
+    // Skin Editor stays out: colour pickers and direct manipulation are
+    // pointer work. Mouse and keyboard only.
+    static const Entry kEntries[] = {
+        { "Settings",       &g_settingsOpen,      "Display, audio, media libraries and accounts",       "Settings" },
+        { "Title Maker",    &g_titleMakerOpen,    "Add games and apps, import from Steam or RetroArch",  "UIX Title Maker" },
+        { "HDD Browser",    &g_hddBrowserOpen,    "Open Xbox qcow2 and FATX drive images",               "Xbox HDD Browser" },
+        { "Playlist Maker", &g_playlistMakerOpen, "Build and edit music playlists",                      "UIX Playlist Maker" },
+    };
+    static const int kCount = (int)(sizeof(kEntries) / sizeof(kEntries[0]));
+
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Focus a freshly opened tool window a frame later, once it has actually
+    // been submitted, then get out of its way.
+    static const char* s_pendingFocus = NULL;
+    if (s_pendingFocus) { ImGui::SetWindowFocus(s_pendingFocus); s_pendingFocus = NULL; }
+
+    // B backs out, and has to run whether the menu is on screen or a tool
+    // window has taken over, so it lives above the early out below.
+    //
+    // ImGui cancels popups during NewFrame, so by the time we look the popup is
+    // already gone and we would close the window on the same press. Latch last
+    // frame's state and give B one frame of grace. LT held means the LT+B
+    // toggle is in play, and the keyboard uses B for Done, so skip both.
+    {
+        extern bool OSK_IsActive();
+        const bool popupOpen = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId |
+                                                      ImGuiPopupFlags_AnyPopupLevel);
+        const bool itemActive = ImGui::IsAnyItemActive();
+        static bool s_imguiHadB = false;
+
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) &&
+            !ImGui::IsKeyDown(ImGuiKey_GamepadL2) &&
+            !popupOpen && !itemActive && !s_imguiHadB && !OSK_IsActive()) {
+            bool closedOne = false;
+            for (int i = 0; i < kCount; i++) {
+                if (*kEntries[i].flag) { *kEntries[i].flag = false; closedOne = true; break; }
+            }
+            if (!closedOne) g_padModeActive = false;
+        }
+        s_imguiHadB = popupOpen || itemActive || OSK_IsActive();
+    }
+
+    for (int i = 0; i < kCount; i++) {
+        if (*kEntries[i].flag) return;   // a tool is up; it owns the screen
+    }
+
+    const float scale = 1.6f;
+    const float rowH  = 19.0f * scale;
+
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    const float menuW = 340.0f * scale;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(menuW, 0.0f), ImVec2(menuW, FLT_MAX));
+
+    // Focus the frame it opens, otherwise NavActive stays 0 and the stick
+    // does nothing, which is the bug this whole window exists to fix.
+    static bool s_wasOpen = false;
+    const bool justOpened = !s_wasOpen;
+    if (justOpened) ImGui::SetNextWindowFocus();
+
+    // Dashboard green, not ImGui grey.
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,       ImVec4(0.04f, 0.09f, 0.04f, 0.96f));
+    ImGui::PushStyleColor(ImGuiCol_Border,         ImVec4(0.35f, 0.75f, 0.30f, 0.85f));
+    ImGui::PushStyleColor(ImGuiCol_Header,         ImVec4(0.20f, 0.55f, 0.20f, 0.90f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered,  ImVec4(0.28f, 0.70f, 0.26f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive,   ImVec4(0.34f, 0.85f, 0.32f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_NavHighlight,   ImVec4(0.55f, 1.00f, 0.50f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Text,           ImVec4(0.88f, 1.00f, 0.86f, 1.00f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f, 16.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize;
+    if (ImGui::Begin("Controller Menu", NULL, flags)) {
+        ImGui::SetWindowFontScale(1.25f);
+
+        ImGui::TextColored(ImVec4(0.55f, 1.00f, 0.50f, 1.00f), "UIX DESKTOP");
+        ImGui::SameLine();
+        {
+            static char s_ver[64] = {0};
+            static bool s_verRead = false;
+            if (!s_verRead) {
+                s_verRead = true;
+                FILE* vf = fopen(AppPath("Configs/version"), "r");
+                if (vf) { if (fgets(s_ver, sizeof(s_ver), vf)) s_ver[strcspn(s_ver, "\r\n")] = 0; fclose(vf); }
+            }
+            const float tw = ImGui::CalcTextSize(s_ver[0] ? s_ver : "").x;
+            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - tw - ImGui::GetStyle().WindowPadding.x);
+            ImGui::TextDisabled("%s", s_ver);
+        }
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        int focused = -1;
+        for (int i = 0; i < kCount; i++) {
+            if (justOpened && i == 0) ImGui::SetKeyboardFocusHere();
+            if (ImGui::Selectable(kEntries[i].label, false, 0, ImVec2(0.0f, rowH))) {
+                *kEntries[i].flag = !*kEntries[i].flag;
+                if (*kEntries[i].flag) s_pendingFocus = kEntries[i].win;
+            }
+            if (ImGui::IsItemFocused() || ImGui::IsItemHovered()) focused = i;
+        }
+
+        // Describe the highlight, so you know before you commit.
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.82f, 0.60f, 1.00f));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(focused >= 0 ? kEntries[focused].desc : " ");
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Selectable("Resume Dashboard", false, 0, ImVec2(0.0f, rowH)))
+            g_padModeActive = false;
+        if (ImGui::Selectable("Exit to Desktop", false, 0, ImVec2(0.0f, rowH))) {
+            SDL_Event quit;
+            quit.type = SDL_QUIT;
+            SDL_PushEvent(&quit);
+        }
+
+        ImGui::SetWindowFontScale(1.0f);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(7);
+    s_wasOpen = g_padModeActive;
+
+}
+
+// Controller hints along the bottom in pad mode. Glyphs are embedded, so the
+// tool UI owes nothing to skin or data files.
+void RenderControllerHints() {
+    ImGuiIO& io = ImGui::GetIO();
+    extern bool g_padModeActive;
+    if (!g_padModeActive) return;
+    if (!(io.BackendFlags & ImGuiBackendFlags_HasGamepad)) return;
+
+    // Two glyphs per hint, so chords read as buttons rather than text.
+    struct Hint {
+        const unsigned char* a; unsigned int alen;
+        const unsigned char* b; unsigned int blen;
+        const char* label;
+    };
+    // Same buttons mean different things while typing, so say which.
+    static const Hint kNav[] = {
+        { xbtn_a_png,  xbtn_a_png_len,  NULL,       0,              "Select" },
+        { xbtn_b_png,  xbtn_b_png_len,  NULL,       0,              "Back"   },
+        { xbtn_y_png,  xbtn_y_png_len,  NULL,       0,              "Type"   },
+        { xbtn_x_png,  xbtn_x_png_len,  NULL,       0,              "Hold: Move / Resize" },
+        { xbtn_lt_png, xbtn_lt_png_len, xbtn_b_png, xbtn_b_png_len, "Exit Pad Mode" },
+    };
+    static const Hint kType[] = {
+        { xbtn_a_png,  xbtn_a_png_len,  NULL, 0, "Type"      },
+        { xbtn_x_png,  xbtn_x_png_len,  NULL, 0, "Backspace" },
+        { xbtn_b_png,  xbtn_b_png_len,  NULL, 0, "Done"      },
+    };
+    extern bool OSK_IsActive();
+    const bool typing = OSK_IsActive();
+    const Hint* kHints = typing ? kType : kNav;
+    const int kCount = typing ? (int)(sizeof(kType) / sizeof(kType[0]))
+                              : (int)(sizeof(kNav)  / sizeof(kNav[0]));
+
+    // Cache by source pointer: the hint set swaps, the glyphs don't.
+    struct Tex { const unsigned char* key; GuiTexture* t; int w, h; };
+    static Tex s_cache[12];
+    static int  s_cacheN = 0;
+    struct L {
+        static Tex* Get(Tex* cache, int& n, const unsigned char* png, unsigned int len) {
+            if (!png) return NULL;
+            for (int i = 0; i < n; i++) if (cache[i].key == png) return &cache[i];
+            if (n >= 12) return NULL;
+            int w = 0, h = 0, ch = 0;
+            unsigned char* px = stbi_load_from_memory(png, (int)len, &w, &h, &ch, 4);
+            if (!px) return NULL;
+            cache[n].key = png; cache[n].t = GuiTextureCreate(w, h, px);
+            cache[n].w = w; cache[n].h = h;
+            stbi_image_free(px);
+            return &cache[n++];
+        }
+    };
+
+    // One height for every glyph, scaled on aspect, or a tall trigger and a
+    // round face button stagger against each other.
+    const float fh      = ImGui::GetFontSize();
+    const float glyphH  = fh * 1.25f;
+    const float padX    = fh * 0.75f;
+    const float gapIcon = fh * 0.30f;
+    const float gapItem = fh * 1.25f;
+    const float barH    = glyphH + fh * 0.85f;
+
+    ImGui::SetNextWindowPos(ImVec2(0.0f, io.DisplaySize.y - barH));
+    ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, barH));
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoFocusOnAppearing;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.03f, 0.08f, 0.03f, 0.92f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    if (ImGui::Begin("##padhints", NULL, flags)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 org = ImGui::GetWindowPos();
+        const float cy = org.y + barH * 0.5f;
+
+        // Hairline on top so it reads as chrome, not a floating box.
+        dl->AddLine(ImVec2(org.x, org.y), ImVec2(org.x + io.DisplaySize.x, org.y),
+                    IM_COL32(90, 190, 85, 140), 1.0f);
+
+        float x = org.x + padX;
+        for (int i = 0; i < kCount; i++) {
+            const unsigned char* srcs[2] = { kHints[i].a, kHints[i].b };
+            const unsigned int   lens[2] = { kHints[i].alen, kHints[i].blen };
+            for (int k = 0; k < 2; k++) {
+                Tex* tp = L::Get(s_cache, s_cacheN, srcs[k], lens[k]);
+                if (!tp || !tp->t) continue;
+                const Tex& t = *tp;
+                if (k == 1) {
+                    const ImVec2 ps = ImGui::CalcTextSize("+");
+                    dl->AddText(ImVec2(x, cy - ps.y * 0.5f), IM_COL32(190, 220, 190, 255), "+");
+                    x += ps.x + gapIcon;
+                }
+                const float gw = glyphH * ((float)t.w / (float)t.h);
+                dl->AddImage((ImTextureID)GuiTextureImId(t.t),
+                             ImVec2(x, cy - glyphH * 0.5f),
+                             ImVec2(x + gw, cy + glyphH * 0.5f));
+                x += gw + gapIcon;
+            }
+            const ImVec2 ls = ImGui::CalcTextSize(kHints[i].label);
+            dl->AddText(ImVec2(x, cy - ls.y * 0.5f), IM_COL32(225, 240, 222, 255),
+                        kHints[i].label);
+            x += ls.x + gapItem;
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
 void RenderMainMenuBar() {
     if (!ImGui::BeginMainMenuBar())
         return;
@@ -147,10 +403,6 @@ void RenderMainMenuBar() {
         ImGui::Separator();
         if (ImGui::MenuItem("Settings...", "F4")) {
             g_settingsOpen = true;
-        }
-        extern bool g_showMenuBar;
-        if (ImGui::MenuItem("Hide Menu Bar", "F10")) {
-            g_showMenuBar = false;
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Quit", "Ctrl+Q")) {
@@ -180,23 +432,44 @@ void RenderMainMenuBar() {
     }
 
     // ---- View (display only) ----
+    // View is for what you're looking at. Renderer settings that need a device
+    // reset (MSAA, resolution) live in Settings > Display, so there's one place
+    // to change them instead of two that disagree.
     if (ImGui::BeginMenu("View")) {
+        extern int  g_windowMode;
+        extern bool g_displayChangeRequested;
+        extern bool g_menuBarAutoHide;
+        extern bool g_showMenuBar;
+
+        if (ImGui::MenuItem("Fullscreen", "F11", g_windowMode == 2)) {
+            g_windowMode = (g_windowMode == 2) ? 0 : 2;
+            g_displayChangeRequested = true;
+            SaveDesktopSettings();
+        }
+        if (ImGui::MenuItem("Borderless Window", "F12")) {
+            Uint32 wf = SDL_GetWindowFlags(g_pSDLWindow);
+            SDL_SetWindowBordered(g_pSDLWindow,
+                                  (wf & SDL_WINDOW_BORDERLESS) ? SDL_TRUE : SDL_FALSE);
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::BeginMenu("Menu Bar")) {
+            if (ImGui::MenuItem("Auto-hide", NULL, g_menuBarAutoHide)) {
+                g_menuBarAutoHide = !g_menuBarAutoHide;
+                SaveDesktopSettings();
+            }
+            if (ImGui::MenuItem("Hide", "F10")) {
+                g_showMenuBar = false;
+            }
+            ImGui::EndMenu();
+        }
+
+        ImGui::Separator();
+
         if (ImGui::MenuItem("CRT Effect", NULL, g_crt.enabled)) {
             g_crt.enabled = !g_crt.enabled;
             SaveDesktopSettings();
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Wireframe", NULL, g_bWireframe)) {
-            g_bWireframe = !g_bWireframe;
-        }
-        if (ImGui::BeginMenu("MSAA")) {
-            for (int i = 0; i < s_msaaCount; i++) {
-                if (ImGui::MenuItem(s_msaaLabels[i], NULL, g_msaaSamples == s_msaaValues[i])) {
-                    g_msaaSamples = s_msaaValues[i];
-                    g_msaaChangeRequested = true;
-                }
-            }
-            ImGui::EndMenu();
         }
         ImGui::EndMenu();
     }
@@ -244,6 +517,10 @@ void RenderMainMenuBar() {
                     g_bWireframe = false;
                 }
             }
+            if (ImGui::MenuItem("Wireframe", NULL, g_bWireframe)) {
+                g_bWireframe = !g_bWireframe;
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("XAP Editor", "F2", g_xapEditorOpen)) {
                 g_xapEditorOpen = !g_xapEditorOpen;
             }
@@ -311,6 +588,23 @@ void RenderSettingsWindow() {
             ImGui::Text("qcow2 HDD Image:");
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
             ImGui::InputText("##qcowpath", g_qcowPath, sizeof(g_qcowPath));
+
+            ImGui::Spacing();
+            {
+                extern bool g_menuBarAutoHide;
+                if (ImGui::Checkbox("Auto-hide menu bar", &g_menuBarAutoHide))
+                    SaveDesktopSettings();
+                ImGui::SameLine();
+                ImGui::TextDisabled("(reveals when the pointer reaches the top edge)");
+            }
+
+            ImGui::Spacing();
+            ImGui::Text("User Directory:");
+            ImGui::TextDisabled("%s", Plat_UserDataDir());
+            if (ImGui::Button("Open User Directory"))
+                Plat_OpenInFileManager(Plat_UserDataDir());
+            ImGui::SameLine();
+            ImGui::TextDisabled("(skins, orbs, music, saves and settings)");
 
             ImGui::Spacing();
             ImGui::Separator();
@@ -410,6 +704,14 @@ void RenderSettingsWindow() {
                 g_fpsCap = s_fpsValues[fpsIdx];
                 SaveDesktopSettings();
             }
+
+            if (ImGui::Checkbox("Emulate Xbox Resolution", &g_bEmulateXboxRes)) {
+                TheseusSetProjectionDirty();
+                SaveDesktopSettings();
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(720x480 design space, keeps XIP scenes framed as authored)");
+            ImGui::Spacing();
 
             ImGui::AlignTextToFramePadding(); ImGui::Text("Resolution:");
             ImGui::SameLine(kLabelX); ImGui::SetNextItemWidth(kWidgetW);
@@ -942,7 +1244,7 @@ void RenderAboutWindow() {
 
     static char s_version[64] = "";
     if (!s_version[0]) {
-        FILE* vf = fopen("Configs/version", "r");
+        FILE* vf = fopen(AppPath("Configs/version"), "r");
         if (vf) {
             char line[128];
             while (fgets(line, sizeof(line), vf)) {
@@ -1034,7 +1336,7 @@ void RenderShortcutsWindow() {
         }
         ImGui::Separator();
         ImGui::Text("Ctrl+O   Open Media...");
-        ImGui::Text("Ctrl+M   Toggle Mute");
+        ImGui::Text("LT+B     Overlay / Menu Bar (gamepad)"); ImGui::Text("Ctrl+M   Toggle Mute");
         ImGui::Text("Ctrl+R   Restart Dashboard");
         ImGui::Text("Ctrl+Q   Quit");
         ImGui::Text("Escape   Deselect (Inspector)");

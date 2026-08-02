@@ -1,5 +1,6 @@
 // jellyfin_client.cpp: Jellyfin Media Server HTTPS client.
 
+#include "app_paths.h"
 #include "jellyfin_client.h"
 #include "http_util.h"
 #include "json_util.h"
@@ -573,8 +574,8 @@ std::string Jellyfin_StreamUrl(const std::string& itemId)
 static std::string ArtHostPath(const std::string& itemId)
 {
     Mkdir_("Library");
-    Mkdir_("Library/Jellyfin");
-    return "Library/Jellyfin/" + itemId + ".jpg";
+    Mkdir_(AppPath_Tree("Library/Jellyfin"));
+    return std::string(AppPath_Tree("Library/Jellyfin")) + "/" + itemId + ".jpg";
 }
 
 std::string Jellyfin_ArtCachePath(const std::string& itemId)

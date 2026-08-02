@@ -1383,11 +1383,20 @@ void CLayer::Render()
 
         fieldOfView = pViewpoint->m_fieldOfView;
 
-        float aspect = 720.0f/480.0f;
-
-        if (TheseusGetStretchWidescreen())
+        float aspect;
+        if (TheseusGetEmulateXboxRes())
         {
-            aspect *= 1.25f;
+            aspect = 720.0f/480.0f;
+            if (TheseusGetStretchWidescreen())
+                aspect *= 1.25f;
+        }
+        else
+        {
+            // Real window aspect, so the scene fills the display instead of
+            // being squeezed into a 4:3 box.
+            const float vw = TheseusGetViewWidth();
+            const float vh = TheseusGetViewHeight();
+            aspect = (vh > 0.0f) ? (vw / vh) : (720.0f/480.0f);
         }
 
         D3DXMatrixPerspectiveFovLH(&g_matProjection, fieldOfView, aspect, nNear, nFar);

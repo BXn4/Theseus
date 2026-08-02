@@ -3,6 +3,7 @@
 // VRML97 / XAP syntax highlighting, undo / redo, find, line numbers.
 // Desktop-only.
 
+#include "app_paths.h"
 #include "std.h"
 #include "xap_editor.h"
 #include "dashapp.h"
@@ -317,7 +318,7 @@ void RenderXAPEditor() {
         static bool scanned = false;
         if (!scanned) {
             xapFileCount = 0;
-            XapEditor_ScanDir("Data/Xips", xapFiles, &xapFileCount, 256);
+            XapEditor_ScanDir(AppPath("Data/Xips"), xapFiles, &xapFileCount, 256);
             scanned = true;
         }
 
@@ -369,7 +370,7 @@ void RenderXAPEditor() {
                     bool isCurrent = (g_editingInlineNode == NULL &&
                                      strstr(g_xapEditorPath, "default/default.xap") != NULL);
                     if (ImGui::MenuItem("Main Dashboard (root)", NULL, isCurrent)) {
-                        XapEditor_LoadFile("Data/Xips/default/default.xap");
+                        XapEditor_LoadFile(AppPath("Data/Xips/default/default.xap"));
                         g_editingInlineNode = NULL;
                         g_editingInlineUrl[0] = '\0';
                     }
@@ -382,7 +383,7 @@ void RenderXAPEditor() {
                         bool cur = (g_editingInlineNode == (CNode*)s_cachedInlines[i].node);
                         if (ImGui::MenuItem(label, NULL, cur)) {
                             char xapPath[512];
-                            snprintf(xapPath, sizeof(xapPath), "Data/Xips/default/%s", s_cachedInlines[i].url);
+                            snprintf(xapPath, sizeof(xapPath), "%s", AppPathf("Data/Xips/default/%s", s_cachedInlines[i].url));
                             XapEditor_LoadFile(xapPath);
                             g_editingInlineNode = (CNode*)s_cachedInlines[i].node;
                             strncpy(g_editingInlineUrl, s_cachedInlines[i].url, sizeof(g_editingInlineUrl) - 1);

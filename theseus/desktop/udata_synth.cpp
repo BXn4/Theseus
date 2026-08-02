@@ -5,6 +5,7 @@
 // UTF-16 LE encoded INI text with a [default] section containing
 // `TitleName=<name>`.
 
+#include "app_paths.h"
 #include "udata_synth.h"
 #include "virtual_games.h"
 
@@ -94,7 +95,7 @@ static void AppendUtf8AsUtf16(const char* s, unsigned char* outBuf, size_t* outP
 // section is missing (which is always, for our synthesis).
 static bool WriteTitleMeta(const char* titleID, const char* name) {
 	char dir[512];
-	snprintf(dir, sizeof(dir), "Library/UDATA/%s", titleID);
+	snprintf(dir, sizeof(dir), "%s", AppPathf("Library/UDATA/%s", titleID));
 	MkdirP(dir);
 
 	char path[512];
@@ -130,7 +131,7 @@ int UDataSynth_RebuildAll() {
 		// Skip if a TitleMeta.xbx already exists -- user-supplied save
 		// metadata wins over our synthesized stub.
 		char metaPath[512];
-		snprintf(metaPath, sizeof(metaPath), "Library/UDATA/%s/TitleMeta.xbx", g.titleID);
+		snprintf(metaPath, sizeof(metaPath), "%s", AppPathf("Library/UDATA/%s/TitleMeta.xbx", g.titleID));
 		struct stat st;
 		if (stat(metaPath, &st) == 0) continue;
 

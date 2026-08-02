@@ -2,6 +2,7 @@
 // JSON cache at Library/TMDB/. Targeted field extractor instead of a
 // full JSON parser -- TMDB shapes are stable and we want ~5 fields.
 
+#include "app_paths.h"
 #include "tmdb.h"
 
 #include <cstdio>
@@ -68,7 +69,7 @@ static inline int Mkdir(const char* path)
 
 static std::string CachePath(const char* prefix, const std::string& slug)
 {
-    std::string p = "Library/TMDB/";
+    std::string p = std::string(AppPath_Tree("Library/TMDB")) + "/";
     Mkdir("Library");
     Mkdir(p.c_str());
     p += prefix;

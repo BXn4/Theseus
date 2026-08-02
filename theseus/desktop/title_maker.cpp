@@ -2,6 +2,7 @@
 // managing the virtual games library (the games.ini-driven entries
 // the dashboard surfaces in TitleScanner). Desktop-only.
 
+#include "app_paths.h"
 #include "std.h"
 #include "dashapp.h"
 #include "panel_shared.h"
@@ -272,9 +273,9 @@ static void TM_RAImportItem(const char* label, const char* path,
 #define TM_MAX_ICONS 512
 static int TM_ReadIconsIni(char keys[][128], char vals[][128]) {
     int count = 0;
-    const char* path = "Configs/Icons.ini";
+    const char* path = AppPath("Configs/Icons.ini");
     FILE* fp = fopen(path, "r");
-    if (!fp) fp = fopen("Configs/icons.ini", "r");
+    if (!fp) fp = fopen(AppPath("Configs/icons.ini"), "r");
     if (!fp) return 0;
     char line[256];
     while (fgets(line, sizeof(line), fp) && count < TM_MAX_ICONS) {
@@ -296,7 +297,7 @@ static int TM_ReadIconsIni(char keys[][128], char vals[][128]) {
 }
 
 static void TM_WriteIconsIni(char keys[][128], char vals[][128], int count) {
-    FILE* fp = fopen("Configs/Icons.ini", "w");
+    FILE* fp = fopen(AppPath("Configs/Icons.ini"), "w");
     if (!fp) return;
     fprintf(fp, "[default]\n");
     for (int i = 0; i < count; i++)
@@ -1298,7 +1299,7 @@ void RenderTitleMaker() {
             if (!s_stLogoTried) {
                 s_stLogoTried = true;
                 int w = 0, h = 0, ch = 0;
-                unsigned char* pixels = stbi_load("Configs/steamlogo.png", &w, &h, &ch, 4);
+                unsigned char* pixels = stbi_load(AppPath("Configs/steamlogo.png"), &w, &h, &ch, 4);
                 if (pixels) {
                     s_stLogoTex = GuiTextureCreate(w, h, pixels);
                     stbi_image_free(pixels);
@@ -1489,8 +1490,8 @@ void RenderTitleMaker() {
         } else {
             VirtualGame& g = g_vgames.games[s_stSelectedVi];
             char iconPng[600], iconJpg[600];
-            snprintf(iconPng, sizeof(iconPng), "Configs/icons/%s.png", g.titleID);
-            snprintf(iconJpg, sizeof(iconJpg), "Configs/icons/%s.jpg", g.titleID);
+            snprintf(iconPng, sizeof(iconPng), "%s", AppPathf("Configs/icons/%s.png", g.titleID));
+            snprintf(iconJpg, sizeof(iconJpg), "%s", AppPathf("Configs/icons/%s.jpg", g.titleID));
             struct stat st;
             const char* iconPath = (stat(iconJpg, &st) == 0) ? iconJpg
                                  : (stat(iconPng, &st) == 0) ? iconPng : 0;
@@ -1901,8 +1902,8 @@ void RenderTitleMaker() {
             VirtualGame& g = g_vgames.games[s_raSelectedVi];
 
             char iconPng[600], iconJpg[600];
-            snprintf(iconPng, sizeof(iconPng), "Configs/icons/%s.png", g.titleID);
-            snprintf(iconJpg, sizeof(iconJpg), "Configs/icons/%s.jpg", g.titleID);
+            snprintf(iconPng, sizeof(iconPng), "%s", AppPathf("Configs/icons/%s.png", g.titleID));
+            snprintf(iconJpg, sizeof(iconJpg), "%s", AppPathf("Configs/icons/%s.jpg", g.titleID));
             struct stat st;
             const char* iconPath = (stat(iconPng, &st) == 0) ? iconPng
                                  : (stat(iconJpg, &st) == 0) ? iconJpg : 0;
