@@ -643,6 +643,26 @@ void SaveDesktopSettings() {
 
 // Helper: returns true when ImGui has an active text input widget (Title Maker, inspector search, etc.)
 static bool s_imguiHasRendered = false;
+static void BgfxApplyReset();
+
+// The backing scale isn't settled when bgfx::init runs on macOS, and dragging
+// between a Retina and a 1x display changes it mid session. Reconcile the
+// backbuffer against the real drawable rather than trusting any one moment.
+// Called from every render loop, including the boot animation's own.
+void Gfx_ReconcileDrawable()
+{
+    static int s_lastW = 0, s_lastH = 0;
+    int dw = 0, dh = 0;
+    Plat_GetDrawableSize(&dw, &dh);
+    if (dw <= 0 || dh <= 0) return;
+    if (dw == s_lastW && dh == s_lastH) return;
+    s_lastW = dw; s_lastH = dh;
+    BgfxApplyReset();
+    if (getenv("UIX_GFXDEBUG"))
+        fprintf(stderr, "[gfx] drawable now %dx%d px (scale %.2f)\n",
+                dw, dh, Plat_GetDisplayScale());
+}
+
 bool ImGui_WantsKeyboard() {
     if (!s_imguiHasRendered) return false;
     return ImGui::GetIO().WantCaptureKeyboard;
@@ -793,6 +813,8 @@ static void PreSwapOverlays() {
         if (OSK_IsActive()) nio.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
         else                nio.ConfigFlags |=  ImGuiConfigFlags_NavEnableGamepad;
     }
+    Gfx_ReconcileDrawable();
+
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 
@@ -1475,8 +1497,15 @@ int main(int argc, char* argv[]) {
 #  endif
             bgfx::Init bgfxInit;
             bgfxInit.platformData       = pd;
-            bgfxInit.resolution.width   = 1280;
-            bgfxInit.resolution.height  = 720;
+            // Pixels, not points. On a HiDPI display the drawable is larger
+            // than the window, and a hardcoded size gives bgfx a backbuffer
+            // smaller than the surface: dashboard in the corner, clear colour
+            // over the rest.
+            int initW = 0, initH = 0;
+            Plat_GetDrawableSize(&initW, &initH);
+            if (initW <= 0 || initH <= 0) { initW = 1280; initH = 720; }
+            bgfxInit.resolution.width   = (uint32_t)initW;
+            bgfxInit.resolution.height  = (uint32_t)initH;
             bgfxInit.resolution.reset   = BgfxResetFlags();
             // Renderer pick. User override via Config.ini Renderer key
             // (auto / d3d11 / vulkan / opengl / metal / opengles). Default
@@ -1497,6 +1526,13 @@ int main(int argc, char* argv[]) {
                 const bgfx::Caps* caps = bgfx::getCaps();
                 fprintf(stdout, "bgfx initialized: %s\n",
                         bgfx::getRendererName(caps->rendererType));
+
+                // Size the views and the projection off the real drawable
+                // before the first frame. This can read low if the window
+                // isn't realised yet, which the per frame check above heals.
+                BgfxApplyReset();
+                fprintf(stdout, "bgfx backbuffer: %dx%d px (scale %.2f)\n",
+                        initW, initH, Plat_GetDisplayScale());
 
                 // Link the shader programs we use across the run.
                 {
@@ -1543,8 +1579,8 @@ int main(int argc, char* argv[]) {
                 // no rect. ApplyBgfxResize bumps these to window size as
                 // soon as we have one; placeholders here for the first
                 // frame.
-                bgfx::setViewRect(0, 0, 0, 1280, 720);
-                bgfx::setViewRect(2, 0, 0, 1280, 720); // ImGui
+                bgfx::setViewRect(0, 0, 0, (uint16_t)initW, (uint16_t)initH);
+                bgfx::setViewRect(2, 0, 0, (uint16_t)initW, (uint16_t)initH); // ImGui
 
                 // The dashboard renders D3D-style: it expects every draw
                 // to land on the framebuffer in the order it was issued,

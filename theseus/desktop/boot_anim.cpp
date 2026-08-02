@@ -9,6 +9,7 @@
 //   https://www.youtube.com/watch?v=oADANrDGhoQ
 // Original boot animation (c) Microsoft / Pipeworks Software 2001.
 
+#include "display.h"
 #include "boot_anim.h"
 
 #include <SDL.h>
@@ -145,10 +146,15 @@ bool BootAnim_PlayAndWait(SDL_Window* win, const char* path)
 			}
 		}
 
-		// Adjust view 0 to the current window pixel size each frame
-		// in case the user resized; cheap to set even when unchanged.
+		// Runs before the main loop exists, so it has to do its own
+		// reconcile or the whole animation plays at the wrong scale.
+		extern void Gfx_ReconcileDrawable();
+		Gfx_ReconcileDrawable();
+
+		// View 0 in pixels, not points, or it covers a quarter of the
+		// surface on a HiDPI display.
 		int winW = 0, winH = 0;
-		SDL_GetWindowSize(win, &winW, &winH);
+		Plat_GetDrawableSize(&winW, &winH);
 		if (winW <= 0) winW = 1;
 		if (winH <= 0) winH = 1;
 		bgfx::setViewRect(0, 0, 0, (uint16_t)winW, (uint16_t)winH);

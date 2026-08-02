@@ -3,6 +3,7 @@
 // Two paint paths: blit into the CRT pass when the post-process is on,
 // ImGui::Image when it's off. s_videoBlittedToFBO is the handshake.
 
+#include "display.h"
 #include "std.h"
 #include "dashapp.h"
 #include "media_player.h"
@@ -161,7 +162,12 @@ void MediaUI_DrawFullscreenVideo()
     int dw = (ww > 0) ? ww : 1;
     int dh = (wh > 0) ? wh : 1;
 
-    bgfx::setViewRect(0, 0, 0, (uint16_t)dw, (uint16_t)dh);
+    // Viewport in pixels. ww/wh above are points, right for the ImGui
+    // chrome but a quarter of the surface on a HiDPI display.
+    int pw = 0, ph = 0;
+    Plat_GetDrawableSize(&pw, &ph);
+    if (pw <= 0 || ph <= 0) { pw = dw; ph = dh; }
+    bgfx::setViewRect(0, 0, 0, (uint16_t)pw, (uint16_t)ph);
     bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
 
     float qw, qh;
