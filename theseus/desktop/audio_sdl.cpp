@@ -3,6 +3,7 @@
 // MP3, WAV, and XAP-script-driven audio cues. Intentionally does NOT
 // include std.h, to avoid #define new conflicts with STL.
 
+#include "app_paths.h"
 #include <SDL.h>
 #include <SDL_mixer.h>
 #include <stdio.h>
@@ -462,7 +463,7 @@ extern "C" char g_musicRoot[512];
 const char* DashMusic_GetConfiguredRoot(void)
 {
     if (g_musicRoot[0]) return g_musicRoot;
-    return "Data/Music";
+    return AppPath_Tree("Data/Music");
 }
 
 void DashAudio_MuteAll(void)
@@ -937,7 +938,7 @@ static bool DB_Save(const char* dbPath, const DBMap& in)
 
 static std::string DB_GetPath()
 {
-    return std::string("Library/musicdb.bin");
+    return std::string(AppPath("Library/musicdb.bin"));
 }
 
 // ---------------------------------------------------------------------------

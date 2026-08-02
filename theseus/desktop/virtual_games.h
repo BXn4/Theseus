@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "app_paths.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -13,8 +14,8 @@
 // Roomy enough for a full local library plus a signed-in xCloud/Game Pass
 // account injected at boot (see xcloud_vgames.cpp).
 #define VGAMES_MAX 2048
-#define VGAMES_INI "Configs/games.ini"
-#define VGAMES_ICONS "Configs/icons"
+#define VGAMES_INI AppPath("Configs/games.ini")
+#define VGAMES_ICONS AppPath_Tree("Configs/icons")
 
 struct VirtualGame {
     char name[128];        // display name and virtual folder name
@@ -168,13 +169,13 @@ inline void VGames_DeleteByName(const char* name) {
     if (idx < 0) return;
 
     char iconPath[512];
-    snprintf(iconPath, sizeof(iconPath), "Configs/icons/%s.jpg", g_vgames.games[idx].titleID);
+    snprintf(iconPath, sizeof(iconPath), "%s", AppPathf("Configs/icons/%s.jpg", g_vgames.games[idx].titleID));
     remove(iconPath);
 
     g_vgames.games[idx].valid = false;
     g_vgames.generation++;
 
-    FILE* fp = fopen("Configs/games.ini", "w");
+    FILE* fp = fopen(AppPath("Configs/games.ini"), "w");
     if (fp) {
         for (int i = 0; i < g_vgames.count; i++) {
             if (!g_vgames.games[i].valid) continue;

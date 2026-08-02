@@ -31,7 +31,7 @@ The split is intentional. The Xbox build stays faithful to what you'd expect fro
 
 ---
 
-**Running it:** [Quick Start](#quick-start) · [Features](#features) · [Adding games](#adding-games) · [Customization](#customization) · [Controls](#controls-desktop)
+**Running it:** [Quick Start](#quick-start) · [Features](#features) · [Adding games](#adding-games) · [Where your stuff lives](#where-your-stuff-lives) · [Customization](#customization) · [Controls](#controls-desktop)
 
 **Working on it:** [Dependencies](#dependencies) · [Building](#building) · [How it works](#how-it-works) · [Heritage](#heritage) · [Credits](#credits) · [Third-party](#third-party-libraries) · [License](#license)
 
@@ -103,15 +103,58 @@ Title Maker (F3 from the dashboard) is where you connect games to dashboard tile
 
 If you don't use Steam or RetroArch, you can turn either tab off under Optional Tabs (top of Main). Anything you've already added stays in Main either way.
 
+## Where your stuff lives
+
+Everything you can customize sits in a per OS user directory, not next to the
+binary. It's created and seeded on first run, and an existing side by side
+install is migrated across once.
+
+| | |
+|---|---|
+| macOS | `~/Library/Application Support/Theseus/` |
+| Linux | `$XDG_DATA_HOME/theseus`, else `~/.local/share/theseus` |
+| Windows | `%APPDATA%\Theseus\` |
+
+Configs, Library and most of Data live there: skins, orbs, music, screenshots,
+fonts, saves and settings. Only the compiled shaders stay with the binary, so a
+signed .app, a .deb or a flatpak can ship a read only payload without breaking
+anything you own.
+
+**Settings > General > Open User Directory** takes you straight there, which is
+the quickest way to check what the app is actually reading.
+
+On Xbox nothing changed: `C:\UIX Configs\`, `uixdata\` and the rest are where
+they always were.
+
 ## Customization
 
-**Skins.** Drop them into `Data/Skins/` (Xbox: `uixdata\Skins\`) and pick from settings. UIX Lite community skins work as is, no conversion needed. Hot swap, no reboot.
+**Skins.** Drop them into `Data/Skins/` inside the user directory above (Xbox: `uixdata\Skins\`) and pick from settings. UIX Lite community skins work as is, no conversion needed. Hot swap, no reboot.
 
 **Scene authoring** (for the people building dashboards from scratch). Scenes are XAP scripts packed into `.xip` archives. The desktop build has a live XAP editor (F2), scene inspector (F1), and asset reload so you can tweak and see results immediately. The XAP node interface is the contract; the C++ behind it can change but the node API is treated as sacred. Full reference in [`docs/xap-contract.md`](docs/xap-contract.md).
 
 ## Controls (desktop)
 
-Xbox and PlayStation controllers work via SDL2 GameController. Keyboard equivalents:
+### Controller
+
+Xbox and PlayStation pads work via SDL2 GameController. The dashboard itself is
+pad driven as you'd expect; the tool windows have their own mode.
+
+| Input | Action |
+|---|---|
+| **LT + B** | Toggle pad mode. Same chord as the Xbox overlay |
+| Stick / D-pad | Move |
+| A | Select |
+| B | Back out one layer, then close pad mode |
+| Y | Open a text field, which brings up the on screen keyboard |
+| Hold X | Move and resize windows, for when one outgrows the screen |
+
+In pad mode the menu bar steps aside for a controller menu, the pad drives the
+tools instead of the dashboard, and a prompt bar along the bottom says what the
+buttons currently do. On screen keyboard has letters, numbers and a symbol page
+for paths. Turn the whole thing off with `PadMode=0` in `Configs/desktop.ini`.
+
+Skin Editor stays mouse and keyboard only: colour pickers and direct
+manipulation don't translate to a stick. Keyboard equivalents:
 
 <details>
 <summary><b>Dashboard navigation</b></summary>
@@ -242,15 +285,33 @@ git submodule update --init --recursive
 
 **2. Build the bgfx runtime libraries** (once per platform):
 
+Only three libs are needed. bgfx's own top level targets also build `shaderc`,
+`geometryc` and a debug config you'll never load, which takes far longer and
+drags in tools this build doesn't use.
+
 ```
+cd theseus/third-party/bgfx
+
 # macOS (Apple Silicon)
-make -C theseus/third-party/bgfx -j osx-arm64
+../bx/tools/bin/darwin/genie --gcc=osx-arm64 gmake
+make -C .build/projects/gmake-osx-arm64 -j bx bimg bgfx config=release
 
 # Linux
-make -C theseus/third-party/bgfx -j linux-gcc-release64
+../bx/tools/bin/linux/genie --gcc=linux-gcc gmake
+make -C .build/projects/gmake-linux-gcc -j bx bimg bgfx config=release64
 
-# Windows (from a MSYS2 mingw shell, or cross-compiled from Linux)
-make -C theseus/third-party/bgfx -j mingw-gcc-release64
+# Windows (MSYS2 mingw shell, or cross-compiled from Linux)
+../bx/tools/bin/windows/genie.exe --gcc=mingw-gcc gmake
+make -C .build/projects/gmake-mingw-gcc -j bx bimg bgfx config=release64
+```
+
+bx ships `genie` prebuilt, and on an older distro it fails with
+`GLIBC_2.38 not found`. Build it from source and carry on:
+
+```
+git clone --depth 1 https://github.com/bkaradzic/GENie.git /tmp/genie
+make -C /tmp/genie
+cp /tmp/genie/bin/linux/genie theseus/third-party/bx/tools/bin/linux/genie
 ```
 
 **3. Build libdatachannel** (once per platform, macOS and Linux).
@@ -286,6 +347,25 @@ cd build && make desktop-win64
 ```
 
 `make desktop` also builds the vendored projectM (MilkDrop visualizer) into a local prefix on first run. Only re-run the `shaders-bgfx*` Makefile targets if you edit a `.sc` shader source; the checked-in `.bin` files cover every backend.
+
+### macOS .app
+
+`build/mk-macapp.sh` wraps a desktop build into `Theseus.app`: it copies the
+Homebrew dylibs into `Contents/Frameworks`, rewrites their install names to
+`@rpath` so the bundle runs on a machine without your brew layout, builds the
+icon set, and ad-hoc signs the result.
+
+```
+cd build && make desktop
+./build/mk-macapp.sh
+```
+
+Lands at `~/builds/theseus/Theseus.app`. Ad-hoc signing is enough to run it
+locally; handing it to anyone else needs a Developer ID and notarization.
+
+### Steam Deck and AppImage
+
+Coming soon.
 
 Cross-compiling for Windows from macOS / Linux, ARM64 Linux, or any of the more involved setups is in [`docs/desktop/`](docs/desktop/). The CI workflow builds all four desktop targets (macOS, Linux x64, Linux ARM64, Windows) on every push, which is the closest thing to executable docs for the one-time setup.
 

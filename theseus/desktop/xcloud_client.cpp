@@ -6,6 +6,7 @@
 // a stream token per offering (xhome for your consoles, xgpuweb for cloud). The
 // stream token carries the region host and bearer.
 
+#include "app_paths.h"
 #include "xcloud_client.h"
 #include "http_util.h"
 #include "json_util.h"
@@ -890,8 +891,8 @@ static std::map<std::string, std::atomic<bool>*> s_artInFlight;
 static std::string Xcloud_ArtCacheHostPath(const std::string& titleId)
 {
     Mkdir_("Library");
-    Mkdir_("Library/Xcloud");
-    return "Library/Xcloud/" + titleId + ".jpg";
+    Mkdir_(AppPath_Tree("Library/Xcloud"));
+    return std::string(AppPath_Tree("Library/Xcloud")) + "/" + titleId + ".jpg";
 }
 
 // Xbox-style path for the XAP; xboxfs maps E:\ onto Library/.

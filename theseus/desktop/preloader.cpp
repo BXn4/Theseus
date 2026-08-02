@@ -2,6 +2,7 @@
 // boot splash and unpacks bundled XIP archives into xboxfs/ on first
 // run. Desktop-only.
 
+#include "app_paths.h"
 #include "preloader.h"
 #include "std.h"
 #include "imgui.h"
@@ -299,7 +300,7 @@ static int Preloader_ExtractAllXIPs(const char* xipsDir, char statusBuf[], int s
 // Check if extracted XIPs already exist (look for default/default.xap)
 static bool Preloader_HasExtractedXIPs() {
     struct stat st;
-    return (stat("Data/Xips/default/default.xap", &st) == 0 && S_ISREG(st.st_mode));
+    return (stat(AppPath("Data/Xips/default/default.xap"), &st) == 0 && S_ISREG(st.st_mode));
 }
 
 // StartupMode is stored in desktop.ini via g_startupMode (loaded by sdl_main.cpp)
@@ -492,7 +493,7 @@ bool RunPreloader(SDL_Window* window) {
                                ImVec4(0.5f, 0.4f, 0.15f, 1.0f))) {
                 page = PAGE_EXTRACTING;
                 // Run extraction synchronously (it's fast, just file I/O)
-                Preloader_ExtractAllXIPs("Data/Xips", extractStatus, sizeof(extractStatus));
+                Preloader_ExtractAllXIPs(AppPath("Data/Xips"), extractStatus, sizeof(extractStatus));
                 hasExtracted = Preloader_HasExtractedXIPs();
                 page = PAGE_EXTRACT_DONE;
             }

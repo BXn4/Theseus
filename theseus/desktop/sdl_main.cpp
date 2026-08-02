@@ -24,6 +24,8 @@
 #include "boot_anim.h"
 #include "panel_shared.h"
 #include "launch.h"
+#include "app_paths.h"
+#include "display.h"
 #include <signal.h>
 
 #include <SDL_syswm.h>
@@ -36,7 +38,13 @@
 // Loads Data/shaders/<backend>/<name>.bin. Picks subdir from the active renderer.
 bgfx::ShaderHandle theseus_bgfx_load_shader(const char* name)
 {
+#if defined(_WIN32)
+	const char* sub = "dx11";
+#elif defined(__APPLE__)
 	const char* sub = "metal";
+#else
+	const char* sub = "spirv";
+#endif
 	switch (bgfx::getRendererType()) {
 		case bgfx::RendererType::Direct3D11: sub = "dx11";   break;
 		case bgfx::RendererType::Metal:      sub = "metal";  break;
@@ -45,7 +53,7 @@ bgfx::ShaderHandle theseus_bgfx_load_shader(const char* name)
 		default: break;
 	}
 	char path[512];
-	snprintf(path, sizeof(path), "Data/shaders/%s/%s.bin", sub, name);
+	snprintf(path, sizeof(path), "%s", AppPathf("Data/shaders/%s/%s.bin", sub, name));
 	// fopen is macro-routed through xboxfs.h's path translator; the
 	// relative path passes through unchanged, no Xbox-style remap.
 	FILE* f = fopen(path, "rb");
@@ -278,9 +286,11 @@ static void DumpGraphicsInfo()
                 dm.w, dm.h, dm.refresh_rate);
             write2(buf);
         }
-        int winW = 0, winH = 0;
+        int winW = 0, winH = 0, pxW = 0, pxH = 0;
         SDL_GetWindowSize(g_pSDLWindow, &winW, &winH);
-        snprintf(buf, sizeof(buf), "Window size: %dx%d\n", winW, winH);
+        Plat_GetDrawableSize(&pxW, &pxH);
+        snprintf(buf, sizeof(buf), "Window size: %dx%d pts, %dx%d px (scale %.2f)\n",
+                 winW, winH, pxW, pxH, Plat_GetDisplayScale());
         write2(buf);
     }
 
@@ -351,6 +361,9 @@ char s_steamPath[512] = ""; // Steam install root (parent of steamapps/)
 char s_retroarchPath[512] = ""; // RetroArch install root (contains retroarch.exe + cores/)
 bool g_showRetroArchTab = true; // hides the Title Maker RetroArch tab; games stay in games.ini
 bool g_showSteamTab     = true; // hides the Title Maker Steam tab; games stay in games.ini
+bool g_menuBarAutoHide  = true; // reveal the menu bar on a top edge mouseover
+bool g_padModeEnabled   = true; // LT+B can hand the pad to the tools
+bool g_padModeActive    = false; // starts off, or the dashboard is undrivable
 
 // Library roots from desktop.ini [Library]. Consumed by audio_sdl.cpp + media nodes.
 char g_musicRoot[512]  = "";
@@ -382,7 +395,7 @@ extern void Keyboard_InsertText(CKeyboard* pKb, const char* sz);
 extern void Keyboard_HandleKey(CKeyboard* pKb, int sdlKey);
 
 void LoadDesktopSettings() {
-    FILE* fp = fopen("Configs/desktop.ini", "r");
+    FILE* fp = fopen(AppPath("Configs/desktop.ini"), "r");
     if (!fp) return;
     char line[4096];   // xCloud refresh tokens run long
     while (fgets(line, sizeof(line), fp)) {
@@ -486,6 +499,16 @@ void LoadDesktopSettings() {
             if (n == 0 || n == 2 || n == 4 || n == 8)
                 g_msaaSamples = n;
         }
+        else if (strncmp(line, "EmulateXboxRes=", 15) == 0) {
+            g_bEmulateXboxRes = atoi(line + 15) != 0;
+            TheseusSetProjectionDirty();
+        }
+        else if (strncmp(line, "PadMode=", 8) == 0) {
+            g_padModeEnabled = atoi(line + 8) != 0;
+        }
+        else if (strncmp(line, "MenuBarAutoHide=", 16) == 0) {
+            g_menuBarAutoHide = atoi(line + 16) != 0;
+        }
         else if (strncmp(line, "Vsync=", 6) == 0) {
             int n = atoi(line + 6);
             if (n >= 0 && n <= 2) g_vsyncMode = n;
@@ -532,7 +555,7 @@ void LoadDesktopSettings() {
 // Refresh the legacy sections from disk so a Save doesn't overwrite values
 // the dashboard wrote between Load and Save (e.g. skin change via XAP).
 static void RereadLegacyFromDisk() {
-    FILE* fp = fopen("Configs/desktop.ini", "r");
+    FILE* fp = fopen(AppPath("Configs/desktop.ini"), "r");
     if (!fp) return;
     char line[1024];
     while (fgets(line, sizeof(line), fp)) {
@@ -552,7 +575,7 @@ static void RereadLegacyFromDisk() {
 void SaveDesktopSettings() {
     Plat_MkdirP("Configs");
     RereadLegacyFromDisk();
-    FILE* fp = fopen("Configs/desktop.ini", "w");
+    FILE* fp = fopen(AppPath("Configs/desktop.ini"), "w");
     if (!fp) return;
     fprintf(fp, "[Desktop]\n");
     fprintf(fp, "XemuPath=%s\n", s_xemuPath);
@@ -566,6 +589,9 @@ void SaveDesktopSettings() {
     fprintf(fp, "ShowBootAnimation=%d\n",   g_bShowBootAnimation   ? 1 : 0);
     fprintf(fp, "MSAA=%d\n",                g_msaaSamples);
     fprintf(fp, "Vsync=%d\n",               g_vsyncMode);
+    fprintf(fp, "MenuBarAutoHide=%d\n",     g_menuBarAutoHide ? 1 : 0);
+    fprintf(fp, "PadMode=%d\n",             g_padModeEnabled ? 1 : 0);
+    fprintf(fp, "EmulateXboxRes=%d\n",      g_bEmulateXboxRes ? 1 : 0);
     fprintf(fp, "FpsCap=%d\n",              g_fpsCap);
     fprintf(fp, "Hwdec=%d\n",               g_hwdec ? 1 : 0);
     fprintf(fp, "MasterVolume=%.3f\n",      g_masterVolume);
@@ -622,6 +648,12 @@ bool ImGui_WantsKeyboard() {
     return ImGui::GetIO().WantCaptureKeyboard;
 }
 
+bool ImGui_OwnsPad() {
+    if (!s_imguiHasRendered) return false;
+    ImGuiIO& io = ImGui::GetIO();
+    return g_padModeActive || io.NavActive || io.WantCaptureKeyboard;
+}
+
 // Stores a GLuint or bgfx::TextureHandle depending on backend.
 struct GuiTexture {
     bgfx::TextureHandle bgfxHandle;
@@ -660,7 +692,77 @@ unsigned long long GuiTextureImId(const GuiTexture* tex) {
 
 // Forward declarations for PreSwapOverlays
 bool g_debugMode = false;
+void Plat_GetDrawableSize(int* w, int* h)
+{
+    if (w) *w = 0;
+    if (h) *h = 0;
+    if (!g_pSDLWindow) return;
+    SDL_GetWindowSizeInPixels(g_pSDLWindow, w, h);
+}
+
+void Plat_GetWindowSize(int* w, int* h)
+{
+    if (w) *w = 0;
+    if (h) *h = 0;
+    if (!g_pSDLWindow) return;
+    SDL_GetWindowSize(g_pSDLWindow, w, h);
+}
+
+float Plat_GetDisplayScale(void)
+{
+    int pw = 0, ph = 0, lw = 0, lh = 0;
+    Plat_GetDrawableSize(&pw, &ph);
+    Plat_GetWindowSize(&lw, &lh);
+    if (lw <= 0 || pw <= 0) return 1.0f;
+    return (float)pw / (float)lw;
+}
+
 bool g_showMenuBar = true;   // toggled by F10 / View > Hide Menu Bar / --no-toolbar
+
+// Autohide test. Mouse position and DisplaySize are both in ImGui logical
+// units, so the trigger zone is the same physical size on every DPI.
+static bool MenuBarVisible()
+{
+    if (!g_showMenuBar)     return false;
+    if (!g_menuBarAutoHide) return true;
+
+    static bool s_shown = false;
+    ImGuiIO& io = ImGui::GetIO();
+
+    // No pointer on a pad, so no top edge to reach for. LT+B is the same
+    // chord as the Xbox overlay; here the overlay is ImGui.
+    if (g_padModeEnabled &&
+        ImGui::IsKeyDown(ImGuiKey_GamepadL2) &&
+        ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+        g_padModeActive = !g_padModeActive;
+        // Give nav somewhere to land, otherwise the bar is up but dead.
+        if (g_padModeActive) ImGui::SetWindowFocus("##MainMenuBar");
+    }
+    // Pad mode has its own menu, so the pointer bar steps aside.
+    if (g_padModeActive)
+        return false;
+
+    // Showing or hiding the bar moves the viewport work area, and ImGui
+    // clamps windows into it, so toggling mid-interaction shifts whatever is
+    // under the cursor and eats the click. Pin it whenever any UI is in play.
+    extern bool g_settingsOpen;
+    const bool uiInUse =
+        g_settingsOpen ||
+        io.WantCaptureMouse ||
+        ImGui::IsAnyItemActive() ||
+        ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+
+    if (uiInUse) {
+        s_shown = true;
+    } else if (io.MousePos.x < 0.0f || io.MousePos.y < 0.0f) {
+        s_shown = false;
+    } else {
+        // Wider band once it's up so it doesn't flicker on the way to a menu.
+        const float edge = s_shown ? ImGui::GetFrameHeight() + 12.0f : 4.0f;
+        s_shown = io.MousePos.y <= edge;
+    }
+    return s_shown;
+}
 
 // Pre-swap callback: renders ImGui overlays on top of the 3D scene before Present() swaps.
 // This runs in a single ImGui frame so all overlays (mute toast, Title Maker, selection highlight) share input.
@@ -683,8 +785,35 @@ static void PreSwapOverlays() {
 
     extern void ImGui_ImplBgfx_NewFrame();
     ImGui_ImplBgfx_NewFrame();
+    // Keyboard takes the pad outright while up, or ImGui nav and the keyboard
+    // cursor both eat the dpad. Before NewFrame, which is where nav runs.
+    {
+        extern bool OSK_IsActive();
+        ImGuiIO& nio = ImGui::GetIO();
+        if (OSK_IsActive()) nio.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+        else                nio.ConfigFlags |=  ImGuiConfigFlags_NavEnableGamepad;
+    }
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
+
+    // Pointer gets out of the way: always in pad mode, otherwise after a few
+    // seconds still. media_ui owns the cursor during fullscreen playback.
+    {
+        ImGuiIO& cio = ImGui::GetIO();
+        static Uint32 s_lastMove = 0;
+        static int    s_shown = -1;
+        if (cio.MouseDelta.x != 0.0f || cio.MouseDelta.y != 0.0f ||
+            ImGui::IsAnyMouseDown() || cio.MouseWheel != 0.0f)
+            s_lastMove = SDL_GetTicks();
+
+        if (!g_mediaFullscreen) {
+            const bool hide = g_padModeActive || (SDL_GetTicks() - s_lastMove > 3000);
+            const int want = hide ? SDL_DISABLE : SDL_ENABLE;
+            if (want != s_shown) { SDL_ShowCursor(want); s_shown = want; }
+        } else {
+            s_shown = -1;   // media_ui has it; re-assert when we get it back
+        }
+    }
 
     // Pump mpv events every frame regardless of fullscreen state. If we
     // only pump while fullscreen, stale END_FILE events from the previous
@@ -696,10 +825,20 @@ static void PreSwapOverlays() {
         MediaUI_RenderOSD();
     }
 
-    // Menu bar (toggle with F10). In fullscreen video, also auto-hide
-    // alongside the OSD chrome.
-    if (g_showMenuBar && !g_xcloudFullscreen && (!g_mediaFullscreen || MediaUI_OsdVisible()))
+    // Menu bar (F10 hides it outright, otherwise it autohides to the top
+    // edge). In fullscreen video it also follows the OSD chrome.
+    if (MenuBarVisible() && !g_xcloudFullscreen && (!g_mediaFullscreen || MediaUI_OsdVisible())) {
         RenderMainMenuBar();
+        // Hints ride with the menus: shown when they are, gone when they are.
+    }
+    {
+        extern void RenderControllerMenu();
+        extern void RenderControllerHints();
+        RenderControllerMenu();
+        RenderControllerHints();
+        extern void RenderOnScreenKeyboard();
+        RenderOnScreenKeyboard();
+    }
 
     // Settings, About, and Shortcuts windows
     RenderSettingsWindow();
@@ -906,7 +1045,7 @@ static uint32_t BgfxResetFlags() {
 static void BgfxApplyReset() {
     if (!g_pSDLWindow) return;
     int w = 0, h = 0;
-    SDL_GetWindowSize(g_pSDLWindow, &w, &h);
+    Plat_GetDrawableSize(&w, &h);
     if (w <= 0 || h <= 0) return;
     bgfx::reset((uint32_t)w, (uint32_t)h, BgfxResetFlags());
     bgfx::setViewRect(0, 0, 0, (uint16_t)w, (uint16_t)h);
@@ -1015,7 +1154,7 @@ static bgfx::TextureHandle XcloudBgTexture()
     if (s_tried) return s_bg;
     s_tried = true;
     int w = 0, h = 0, ch = 0;
-    unsigned char* px = stbi_load("Data/xcloud_bg.png", &w, &h, &ch, 4);
+    unsigned char* px = stbi_load(AppPath("Data/xcloud_bg.png"), &w, &h, &ch, 4);
     if (px) {
         s_bg = bgfx::createTexture2D((uint16_t)w, (uint16_t)h, false, 1,
             bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_BLIT_DST | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
@@ -1058,7 +1197,7 @@ static void XcloudUI_DrawFullscreenVideo()
     }
 
     int dw = 1280, dh = 720;
-    if (g_pSDLWindow) SDL_GetWindowSize(g_pSDLWindow, &dw, &dh);
+    if (g_pSDLWindow) Plat_GetDrawableSize(&dw, &dh);
     bgfx::setViewRect(0, 0, 0, (uint16_t)dw, (uint16_t)dh);
     bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
 
@@ -1226,6 +1365,9 @@ int main(int argc, char* argv[]) {
 #endif
     }
 
+    // Before anything reads a config.
+    AppPaths_Init();
+
 
     // This fixes compilation so it works for both GCC and clang
 #if defined(__SANITIZE_ADDRESS__)
@@ -1274,7 +1416,7 @@ int main(int argc, char* argv[]) {
 
     // Plain window: bgfx attaches its own backend layer (CAMetalLayer on
     // macOS, Vulkan/D3D11 elsewhere), so no GL drawable flag.
-    Uint32 windowFlags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
+    Uint32 windowFlags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
 
     g_pSDLWindow = SDL_CreateWindow(
         "UIX Desktop - Preview",
@@ -1459,6 +1601,16 @@ int main(int argc, char* argv[]) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    // Pad drives the tool windows too. joystick.cpp already stands down when
+    // ImGui wants input, so the dashboard doesn't move underneath you.
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+
+    // Keep imgui.ini in the user dir. Its default is the working directory,
+    // which inside a .app is Contents/MacOS: writing there breaks the code
+    // signature and fails outright on a read only install.
+    static char s_imguiIni[1024];
+    snprintf(s_imguiIni, sizeof(s_imguiIni), "%s/imgui.ini", AppPath_Tree("Configs"));
+    io.IniFilename = s_imguiIni;
 
     // Xbox-green ImGui theme. High-contrast green text, subtle green tint on
     // chrome, brighter green on active states. Tight spacing, square corners.
@@ -1593,7 +1745,7 @@ int main(int argc, char* argv[]) {
     // isn't the focus there) and toggleable via Settings > Show Boot Animation.
     if (g_bShowBootAnimation && !g_extractedMode) {
         BootAnim_PlayAndWait(g_pSDLWindow,
-            "Configs/xbox_boot.mp4");
+            AppPath("Configs/xbox_boot.mp4"));
     }
 
     // Initialize app globals
@@ -1643,7 +1795,7 @@ int main(int argc, char* argv[]) {
     // In development mode: open editor and load extracted XAPs
     if (g_extractedMode) {
         g_xapEditorOpen = true;
-        XapEditor_LoadFile("Data/Xips/default/default.xap");
+        XapEditor_LoadFile(AppPath("Data/Xips/default/default.xap"));
         if (XapEditor_HasBuffer())
             ReloadSceneFromEditor();
     }
@@ -1789,7 +1941,7 @@ int main(int argc, char* argv[]) {
                     if (event.key.keysym.sym == SDLK_F2) {
                         g_xapEditorOpen = !g_xapEditorOpen;
                         if (g_xapEditorOpen && !XapEditor_HasBuffer())
-                            XapEditor_LoadFile("Data/Xips/default/default.xap");
+                            XapEditor_LoadFile(AppPath("Data/Xips/default/default.xap"));
                     }
                     if (event.key.keysym.sym == SDLK_F3) {
                         g_titleMakerOpen = !g_titleMakerOpen;
@@ -1984,7 +2136,7 @@ int main(int argc, char* argv[]) {
         // leaves view 0 stuck on the FBO from the previous frame.
         if (g_crt.enabled && bgfx::isValid(g_crt.program)) {
             int ww, wh;
-            SDL_GetWindowSize(g_pSDLWindow, &ww, &wh);
+            Plat_GetDrawableSize(&ww, &wh);
             CRT_ResizeFBO_Bgfx(ww, wh);
             CRT_BeginCapture_Bgfx();
         } else {

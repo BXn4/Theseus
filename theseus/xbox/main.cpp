@@ -77,6 +77,7 @@ D3DPRESENT_PARAMETERS g_pp;
 float g_nViewWidth = 0.0f;
 float g_nViewHeight = 0.0f;
 bool g_bStretchWidescreen = false;
+bool g_bEmulateXboxRes = true; // console is always 720x480
 
 // Render state
 bool g_bZBuffer = false;

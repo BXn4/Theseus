@@ -1,5 +1,6 @@
 // plex_client.cpp: Plex Media Server HTTPS client.
 
+#include "app_paths.h"
 #include "plex_client.h"
 #include "http_util.h"
 #include "json_util.h"
@@ -608,8 +609,8 @@ bool Plex_Cache_GetEpisodes(const std::string& seasonRatingKey,
 static std::string Plex_ArtCacheHostPath(const std::string& ratingKey)
 {
     Mkdir_("Library");
-    Mkdir_("Library/Plex");
-    return "Library/Plex/" + ratingKey + ".jpg";
+    Mkdir_(AppPath_Tree("Library/Plex"));
+    return std::string(AppPath_Tree("Library/Plex")) + "/" + ratingKey + ".jpg";
 }
 
 // XBox-style path for the XAP. xboxfs routes E:\ -> Library/.

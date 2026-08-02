@@ -1,10 +1,11 @@
-// Small dependency free leaf, pulled in early by the platform layer.
-// Xbox drive letter to runtime folder next to the binary:
+// Xbox drive letter to a real absolute directory under the user data dir:
 //   C: Configs   Q: Data   E: Library
-// F: G: R: and the rest have no analog, so DriveToPrefix returns NULL and
-// the caller's stat/opendir fails on its own. Also home to the mkdir helpers.
+// F: G: R: and the rest have no analog, so this returns NULL and the caller's
+// stat/opendir fails on its own. Also home to the mkdir helpers.
 
 #pragma once
+
+#include "app_paths.h"
 
 #include <string.h>
 #include <errno.h>
@@ -15,9 +16,9 @@
 #endif
 
 static inline const char* XboxFS_DriveToPrefix(char drive) {
-    if (drive == 'C' || drive == 'c') return "Configs";
-    if (drive == 'Q' || drive == 'q') return "Data";
-    if (drive == 'E' || drive == 'e') return "Library";
+    if (drive == 'C' || drive == 'c') return AppPath_Tree("Configs");
+    if (drive == 'Q' || drive == 'q') return AppPath_Tree("Data");
+    if (drive == 'E' || drive == 'e') return AppPath_Tree("Library");
     return 0;
 }
 

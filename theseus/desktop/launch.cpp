@@ -3,6 +3,7 @@
 // looks the title up in games.ini, mutes audio, minimizes the
 // window, and execs the host platform's launcher.
 
+#include "app_paths.h"
 #include "std.h"
 #include "launch.h"
 #include "panel_shared.h"
@@ -345,7 +346,7 @@ unsigned long long LaunchOverlay_LogoGLTex(int* outW, int* outH)
 
 	if (!s_loadAttempted) {
 		s_loadAttempted = true;
-		const char* path = "Configs/xboxlogo.png";
+		const char* path = AppPath("Configs/xboxlogo.png");
 		int w = 0, h = 0, ch = 0;
 		unsigned char* pixels = stbi_load(path, &w, &h, &ch, 4);
 		if (pixels) {
