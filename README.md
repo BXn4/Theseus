@@ -3,6 +3,7 @@
 [![build](https://github.com/MrMilenko/Theseus/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/MrMilenko/Theseus/actions/workflows/build.yml)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Xbox%20%7C%20macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#)
+[!]![Discord](https://img.shields.io/discord/1391105896179957830)(https://discord.gg/qfVHTYD4xX)
 
 <p align="center">
   <img src="docs/images/vulkan-logo.svg" height="36" alt="Vulkan">
@@ -365,7 +366,7 @@ locally; handing it to anyone else needs a Developer ID and notarization.
 
 ### Steam Deck and AppImage
 
-Coming soon.
+Currently, AppImages are provided for SteamDeck/SteamOS users. This hasn't been fully tested. Please reach out on the TeamUIX [Discord](https://discord.gg/qfVHTYD4xX). 
 
 Cross-compiling for Windows from macOS / Linux, ARM64 Linux, or any of the more involved setups is in [`docs/desktop/`](docs/desktop/). The CI workflow builds all four desktop targets (macOS, Linux x64, Linux ARM64, Windows) on every push, which is the closest thing to executable docs for the one-time setup.
 
