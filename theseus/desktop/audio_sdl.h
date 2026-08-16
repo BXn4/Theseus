@@ -11,6 +11,9 @@ extern "C" {
 #endif
 
 // Initialize/shutdown SDL_mixer audio subsystem
+// Mixer chunk size in sample frames, from desktop.ini AudioBufferFrames.
+extern int g_audioBufferFrames;
+
 int  DashAudio_Init(void);
 void DashAudio_Shutdown(void);
 

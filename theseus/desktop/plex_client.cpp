@@ -140,7 +140,7 @@ void Plex_SignOut()
 
 static void PinAuthWorker()
 {
-    // No strong=true -- strong pins return a 24-char token plex.tv/link rejects.
+    // No strong=true. Strong pins return a 24-char token plex.tv/link rejects.
     HttpResponse r = Http_Post("https://plex.tv/api/v2/pins", "",
                                PlexHeaders(true, false));
     if (!r.ok()) {
@@ -311,7 +311,7 @@ static std::string BuildAssetUrl(const std::string& serverUri,
 }
 
 // ============================================================================
-// TV drill -- /library/metadata/{rk}/children returns seasons or episodes.
+// TV drill: /library/metadata/{rk}/children returns seasons or episodes.
 // ============================================================================
 
 static void SeasonsWorker(std::string serverUri, std::string showRk)
@@ -459,17 +459,48 @@ static void SyncWorker()
 
     std::vector<PlexServer> servers = Plex_GetServers();
     if (servers.empty()) {
+        // Signed in but nothing came back from plex.tv. Distinct from "signed
+        // in and the server has no libraries", and the UI shows both as 0.
+        fprintf(stderr, "[Plex] no servers returned for this account/token\n");
         SetSyncPhase("No Plex servers reachable", 1000);
         s_syncReady   = true;
         s_syncRunning = false;
         return;
     }
-    std::string serverUri = servers[0].uri;
-
+    // Ask each server in turn rather than betting on the first. An account
+    // can list a server that's simply unreachable from here (someone else's
+    // share, a LAN address while you're remote, a machine that's off), and
+    // taking servers[0] on faith renders as "0 libraries" with no complaint.
     SetSyncPhase("Loading library list", 50);
-    HttpResponse r = Http_Get(serverUri + "/library/sections",
-                              PlexHeaders(true, true));
+    std::string serverUri;
+    HttpResponse r;
     std::vector<PlexLibrary> libs;
+
+    for (size_t si = 0; si < servers.size(); si++) {
+        r = Http_Get(servers[si].uri + "/library/sections", PlexHeaders(true, true));
+        if (!r.ok()) {
+            fprintf(stderr, "[Plex] %s unreachable (status %ld), trying next\n",
+                    servers[si].name.c_str(), r.status);
+            continue;
+        }
+        serverUri = servers[si].uri;
+        {
+            std::lock_guard<std::mutex> lk(g_mtx);
+            s_activeServerName = servers[si].name;
+        }
+        fprintf(stderr, "[Plex] using %s (%s)\n",
+                servers[si].name.c_str(), serverUri.c_str());
+        break;
+    }
+
+    if (serverUri.empty()) {
+        fprintf(stderr, "[Plex] none of the %zu server(s) answered\n", servers.size());
+        SetSyncPhase("No Plex servers reachable", 1000);
+        s_syncReady   = true;
+        s_syncRunning = false;
+        return;
+    }
+
     if (r.ok()) {
         size_t arr = Json_FindArray(r.body, "Directory");
         if (arr != std::string::npos) {
@@ -518,7 +549,7 @@ static void SyncWorker()
         itemsByKey[lib.sectionKey] = std::move(items);
     }
 
-    // Publish atomically -- readers see old snapshot or whole new one.
+    // Publish atomically. Readers see old snapshot or whole new one.
     {
         std::lock_guard<std::mutex> lk(g_mtx);
         s_cacheLibs  = std::move(libs);
@@ -575,7 +606,7 @@ bool Plex_Cache_GetSeasons(const std::string& showRatingKey,
             return true;
         }
     }
-    // Not cached -- fire a fetch; SeasonsWorker promotes the result.
+    // Not cached, fire a fetch; SeasonsWorker promotes the result.
     if (!s_servers.empty()) {
         Plex_FetchSeasons(s_servers.front().uri, showRatingKey);
     }
@@ -605,7 +636,7 @@ bool Plex_Cache_GetEpisodes(const std::string& seasonRatingKey,
 // ============================================================================
 
 
-// Host path -- curl writes here. Lives at Library/Plex/<rk>.jpg next to binary.
+// Host path: curl writes here. Lives at Library/Plex/<rk>.jpg next to binary.
 static std::string Plex_ArtCacheHostPath(const std::string& ratingKey)
 {
     Mkdir_("Library");

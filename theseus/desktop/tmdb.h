@@ -1,7 +1,7 @@
 // tmdb.h: in-process TMDB API client. Backed by libcurl (UIX_HTTP);
 // stubs out cleanly when libcurl isn't available at build time.
 //
-// Result records are returned by value — empty fields mean "no data" or
+// Result records are returned by value. Empty fields mean "no data" or
 // "key not configured." Caller never blocks on network: lookups can be
 // kicked off async via TMDB_QueueMovieLookup() / TMDB_QueueShowLookup()
 // and polled via TMDB_GetMovie() / TMDB_GetShow().

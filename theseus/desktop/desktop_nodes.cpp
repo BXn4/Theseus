@@ -3449,7 +3449,7 @@ public:
 			if (!it.summary.empty()) { body += "\n\n"; body += it.summary; }
 		}
 		else if (view == 2) {
-			// Seasons have no summary -- surface the show's plot.
+			// Seasons have no summary. Surface the show's plot.
 			std::vector<PlexItem> items = CurrentItems();
 			if (m_currentShow < 0 || m_currentShow >= (int)items.size()) return new CStrObject;
 			const PlexItem& sh = items[m_currentShow];
@@ -3763,7 +3763,7 @@ END_NODE_FUN()
 
 
 // ============================================================================
-// CJellyfinLibrary -- mirror of CPlexLibrary over Jellyfin's API surface.
+// CJellyfinLibrary: mirror of CPlexLibrary over Jellyfin's API surface.
 // ============================================================================
 
 #include "jellyfin_client.h"
@@ -4230,6 +4230,7 @@ public:
 	CGamesCollection() : m_gen(0)
 	{
 		m_category[0] = 0;
+		m_group[0] = 0;
 	}
 
 	DECLARE_NODE(CGamesCollection, CNode)
@@ -4238,21 +4239,30 @@ public:
 
 	// Current filter
 	char m_category[32];
+	// Folder we've drilled into, "/" separated, empty at the top of a category
+	char m_group[128];
+	// Folder rows, the distinct next path segment below m_group
+	std::vector<std::string> m_folders;
 	// Indices into g_vgames.games, sorted alphabetically by name
 	std::vector<int> m_slice;
 	// Last seen generation. Re-filter when it changes.
 	unsigned int m_gen;
 
+	// Rows are folders first, then titles, so an index below the folder count
+	// addresses m_folders and anything above it addresses m_slice.
+	int TitleIndex(int row) const { return row - (int)m_folders.size(); }
+
 	void EnsureFresh()
 	{
 		VGames_Load();
-		if (m_gen == g_vgames.generation && !m_slice.empty()) return;
+		if (m_gen == g_vgames.generation && !(m_slice.empty() && m_folders.empty())) return;
 		Rebuild();
 	}
 
 	void Rebuild()
 	{
 		m_slice.clear();
+		m_folders.clear();
 		if (!m_category[0]) {
 			m_gen = g_vgames.generation;
 			return;
@@ -4261,9 +4271,36 @@ public:
 		// harddrive view. Future-proofed for F/G if those ever come back.
 		int tmp[VGAMES_MAX];
 		int n = VGames_GetForDirectory("E", m_category, tmp, VGAMES_MAX);
-		m_slice.reserve(n);
-		for (int i = 0; i < n; i++) m_slice.push_back(tmp[i]);
+		size_t glen = strlen(m_group);
+
+		for (int i = 0; i < n; i++) {
+			const char* grp = g_vgames.games[tmp[i]].group;
+			const char* rest;
+			if (glen == 0) {
+				rest = grp;
+			} else {
+				// Must sit under m_group exactly, not merely share a prefix,
+				// so "Mario" can't swallow "Mario Series".
+				if (strncasecmp(grp, m_group, glen) != 0) continue;
+				if (grp[glen] == '\0')     rest = grp + glen;
+				else if (grp[glen] == '/') rest = grp + glen + 1;
+				else                       continue;
+			}
+
+			if (!*rest) { m_slice.push_back(tmp[i]); continue; }
+
+			const char* slash = strchr(rest, '/');
+			std::string seg = slash ? std::string(rest, slash - rest) : std::string(rest);
+			bool have = false;
+			for (size_t f = 0; f < m_folders.size() && !have; f++)
+				have = (strcasecmp(m_folders[f].c_str(), seg.c_str()) == 0);
+			if (!have) m_folders.push_back(seg);
+		}
+
 		// Alphabetical sort, case-insensitive, matches scene expectation.
+		std::sort(m_folders.begin(), m_folders.end(), [](const std::string& a, const std::string& b) {
+			return strcasecmp(a.c_str(), b.c_str()) < 0;
+		});
 		std::sort(m_slice.begin(), m_slice.end(), [](int a, int b) {
 			return strcasecmp(g_vgames.games[a].name, g_vgames.games[b].name) < 0;
 		});
@@ -4288,34 +4325,94 @@ public:
 		} else {
 			m_category[0] = 0;
 		}
+		// Entering a category always lands at its top.
+		m_group[0] = 0;
 		Rebuild();
 	}
 
 	int GetCount()
 	{
 		EnsureFresh();
-		return (int)m_slice.size();
+		return (int)m_folders.size() + (int)m_slice.size();
+	}
+
+	// How many live titles sit in a category, without disturbing the current
+	// filter. The launcher uses it to decide whether a bolted-on category
+	// (ES-DE) is worth showing a row for at all.
+	int CountInCategory(const TCHAR* cat)
+	{
+		VGames_Load();
+		if (!cat || !*cat) return 0;
+		int n = 0;
+		for (int i = 0; i < g_vgames.count; i++) {
+			const VirtualGame& g = g_vgames.games[i];
+			if (g.valid && strcasecmp(g.category, cat) == 0) n++;
+		}
+		return n;
+	}
+
+	// 1 when the row drills down instead of launching.
+	int IsFolder(int i)
+	{
+		EnsureFresh();
+		return (i >= 0 && i < (int)m_folders.size()) ? 1 : 0;
+	}
+
+	// Drill into a folder row. Anything else is ignored.
+	void EnterFolder(int i)
+	{
+		EnsureFresh();
+		if (i < 0 || i >= (int)m_folders.size()) return;
+		char next[sizeof(m_group)];
+		if (m_group[0]) snprintf(next, sizeof(next), "%s/%s", m_group, m_folders[i].c_str());
+		else            snprintf(next, sizeof(next), "%s", m_folders[i].c_str());
+		strcpy(m_group, next);
+		Rebuild();
+	}
+
+	// 1 if we climbed a level, 0 if we were already at the top of the
+	// category. The scene uses that to decide whether B pops a folder or
+	// leaves the title list.
+	int GoUpFolder()
+	{
+		if (!m_group[0]) return 0;
+		char* slash = strrchr(m_group, '/');
+		if (slash) *slash = 0;
+		else       m_group[0] = 0;
+		Rebuild();
+		return 1;
+	}
+
+	// Breadcrumb for the list header, empty at the top of a category.
+	CStrObject* GetGroupPath()
+	{
+		return new CStrObject(m_group);
 	}
 
 	CStrObject* GetTitle(int i)
 	{
 		EnsureFresh();
-		if (i < 0 || i >= (int)m_slice.size()) return new CStrObject;
-		return new CStrObject(g_vgames.games[m_slice[i]].name);
+		if (i >= 0 && i < (int)m_folders.size())
+			return new CStrObject(m_folders[i].c_str());
+		int t = TitleIndex(i);
+		if (t < 0 || t >= (int)m_slice.size()) return new CStrObject;
+		return new CStrObject(g_vgames.games[m_slice[t]].name);
 	}
 
 	CStrObject* GetTitleID(int i)
 	{
 		EnsureFresh();
-		if (i < 0 || i >= (int)m_slice.size()) return new CStrObject;
-		return new CStrObject(g_vgames.games[m_slice[i]].titleID);
+		int t = TitleIndex(i);
+		if (t < 0 || t >= (int)m_slice.size()) return new CStrObject;
+		return new CStrObject(g_vgames.games[m_slice[t]].titleID);
 	}
 
 	CStrObject* GetLaunchURL(int i)
 	{
 		EnsureFresh();
-		if (i < 0 || i >= (int)m_slice.size()) return new CStrObject;
-		return new CStrObject(g_vgames.games[m_slice[i]].launch);
+		int t = TitleIndex(i);
+		if (t < 0 || t >= (int)m_slice.size()) return new CStrObject;
+		return new CStrObject(g_vgames.games[m_slice[t]].launch);
 	}
 
 	// Returns the Xbox-style icon path. xboxfs.h intercepts the load and
@@ -4323,12 +4420,19 @@ public:
 	CStrObject* GetIcon(int i)
 	{
 		EnsureFresh();
-		if (i < 0 || i >= (int)m_slice.size()) return new CStrObject;
-		const VirtualGame& g = g_vgames.games[m_slice[i]];
+		// Folder rows have no art; the scene draws its own folder glyph.
+		int t = TitleIndex(i);
+		if (t < 0 || t >= (int)m_slice.size()) return new CStrObject;
+		const VirtualGame& g = g_vgames.games[m_slice[t]];
 		// Streaming entries (xCloud) carry box art in the shared art cache,
 		// keyed by titleId, not a per-folder icon.jpg.
 		if (VGames_IsStreaming(g))
 			return new CStrObject(_T(Xcloud_ArtCachePath(g.titleID).c_str()));
+		// Nothing registered: hand back empty so the scene keeps the default
+		// orb. Returning a path that isn't there makes the loader shout once
+		// per row, which on a few thousand unscraped roms is all you see.
+		if (!VGames_GetIconPath(m_slice[t]))
+			return new CStrObject;
 		char buf[MAX_PATH];
 		snprintf(buf, sizeof(buf), "%s:\\%s\\%s\\icon.jpg",
 		         g.drive[0] ? g.drive : "E",
@@ -4343,8 +4447,9 @@ public:
 	void LaunchTitle(int i)
 	{
 		EnsureFresh();
-		if (i < 0 || i >= (int)m_slice.size()) return;
-		const VirtualGame& g = g_vgames.games[m_slice[i]];
+		int t = TitleIndex(i);
+		if (t < 0 || t >= (int)m_slice.size()) return;
+		const VirtualGame& g = g_vgames.games[m_slice[t]];
 		char devicePath[MAX_PATH];
 		snprintf(devicePath, sizeof(devicePath),
 		         "\\Device\\Harddisk0\\Partition1\\%s\\%s",
@@ -4364,6 +4469,11 @@ END_NODE_PROPS()
 START_NODE_FUN(CGamesCollection, CNode)
 	NODE_FUN_VS(SetCategory)
 	NODE_FUN_IV(GetCount)
+	NODE_FUN_IS(CountInCategory)
+	NODE_FUN_II(IsFolder)
+	NODE_FUN_VI(EnterFolder)
+	NODE_FUN_IV(GoUpFolder)
+	NODE_FUN_SV(GetGroupPath)
 	NODE_FUN_SI(GetTitle)
 	NODE_FUN_SI(GetTitleID)
 	NODE_FUN_SI(GetLaunchURL)

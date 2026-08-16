@@ -732,6 +732,9 @@ DESKTOP_SRCS_PLATFORM = \
 	$(THESEUS_SRC)/desktop/hdd_browser.cpp \
 	$(THESEUS_SRC)/desktop/xbox_hdd.cpp \
 	$(THESEUS_SRC)/desktop/title_maker.cpp \
+	$(THESEUS_SRC)/desktop/esde.cpp \
+	$(THESEUS_SRC)/desktop/esde_vgames.cpp \
+	$(THESEUS_SRC)/desktop/icon_compress.cpp \
 	$(THESEUS_SRC)/desktop/playlist.cpp \
 	$(THESEUS_SRC)/desktop/playlist_maker.cpp \
 	$(THESEUS_SRC)/desktop/preloader.cpp \
@@ -1147,6 +1150,44 @@ WIN64_LDFLAGS += $(BGFX_WIN64_BUILD_DIR)/libbgfxRelease.a \
                  $(BGFX_WIN64_BUILD_DIR)/libbimgRelease.a \
                  -lgdi32 -lpsapi
 
+# xCloud / Xbox remote play on Windows. OpenSSL and opus come from
+# build/fetch-mingw-deps.sh, which also builds the trimmed static ffmpeg
+# (H.264 decode + swscale only, so no codec DLLs to ship). libdatachannel
+# is a one time cross build:
+#   cmake -S theseus/third-party/libdatachannel -B <root>/build-win64 \
+#     -DCMAKE_TOOLCHAIN_FILE=build/cmake-toolchains/mingw-w64-x86_64.cmake \
+#     -DCMAKE_FIND_ROOT_PATH=$(MINGW_DEPS) -DOPENSSL_ROOT_DIR=$(MINGW_DEPS) \
+#     -DBUILD_SHARED_LIBS=OFF -DNO_WEBSOCKET=1 -DNO_EXAMPLES=1 \
+#     -DNO_TESTS=1 -DENABLE_WARNINGS_AS_ERRORS=OFF
+#   cmake --build <root>/build-win64 -j
+# ENABLE_WARNINGS_AS_ERRORS=OFF is required: libsrtp trips -Werror=format
+# under LLP64, where u_long is 32 bit and its %x format checks disagree.
+# Skipped, leaving xCloud compiled out, if the libs are not built yet.
+MINGW_DEPS ?= $(HOME)/cross/mingw64
+LDC_WIN64  := $(LDC_ROOT)/build-win64
+ifneq ($(wildcard $(LDC_WIN64)/libdatachannel.a),)
+  # RTC_STATIC or rtc/common.hpp marks every symbol __declspec(dllimport)
+  # and the link fails on __imp_ prefixed names against the static archive.
+  WIN64_CFLAGS  += -DTHESEUS_HAVE_WEBRTC=1 -DRTC_STATIC \
+                   -I$(LDC_ROOT)/include \
+                   -I$(MINGW_DEPS)/include
+  # avcodec before swscale before avutil: static archives resolve left to right.
+  WIN64_LDFLAGS += $(LDC_WIN64)/libdatachannel.a \
+                   $(LDC_WIN64)/deps/libjuice/libjuice.a \
+                   $(LDC_WIN64)/deps/libsrtp/libsrtp2.a \
+                   $(LDC_WIN64)/deps/usrsctp/usrsctplib/libusrsctp.a \
+                   $(MINGW_DEPS)/lib/libavcodec.a \
+                   $(MINGW_DEPS)/lib/libswscale.a \
+                   $(MINGW_DEPS)/lib/libavutil.a \
+                   $(MINGW_DEPS)/lib/libopus.dll.a \
+                   $(MINGW_DEPS)/lib/libssl.dll.a \
+                   $(MINGW_DEPS)/lib/libcrypto.dll.a \
+                   -lbcrypt -liphlpapi -lcrypt32 -lsecur32 \
+                   -lws2_32 -lwinmm -lole32
+  # Full paths, not -lssl: curl-mingw ships its own libssl.a/libcrypto.a
+  # (LibreSSL, no EVP_MAC_*) and its -L comes first on the link line.
+endif
+
 WIN64_SRCS = $(filter-out \
   $(THESEUS_SRC)/desktop/imgui/imgui_impl_opengl3.cpp \
   $(THESEUS_SRC)/desktop/imgui_impl_bgfx.cpp, $(DESKTOP_ALL_SRCS))
@@ -1213,6 +1254,11 @@ $(WIN64_TARGET): $(WIN64_OBJS)
 		for f in $$D/libprojectM-4*.dll $$D/projectM-4*.dll; do \
 			[ -f "$$f" ] && cp "$$f" $(WIN64_DIR)/ || true ; \
 		done ; \
+	done; true
+	@# OpenSSL + opus ship as DLLs for the xCloud transport. ffmpeg is linked
+	@# static, so there are no codec DLLs to carry.
+	@for f in $(MINGW_DEPS)/bin/libssl-*.dll $(MINGW_DEPS)/bin/libcrypto-*.dll $(MINGW_DEPS)/bin/libopus-*.dll; do \
+		[ -f "$$f" ] && cp "$$f" $(WIN64_DIR)/ || true ; \
 	done; true
 	@for D in Configs Data Library; do \
 		if command -v rsync >/dev/null 2>&1; then \

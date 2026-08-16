@@ -260,7 +260,7 @@ bool FindInXIPAndDetach(const TCHAR* szURL, BYTE*& pbContent, DWORD& cbContent)
 }
 
 // =========================================================================
-// FindObjectInXIP -- find an object by path, with skin override for textures
+// FindObjectInXIP: find an object by path, with skin override for textures
 // =========================================================================
 
 void* FindObjectInXIP(const TCHAR* szURL, const TCHAR* szFilename, int nType)
@@ -442,7 +442,7 @@ bool CXipFile::Load()
 }
 
 // =========================================================================
-// Texture loading -- unwrap XPR container and create D3D texture
+// Texture loading: unwrap XPR container and create D3D texture
 // =========================================================================
 
 static LPDIRECT3DTEXTURE8 ReadTextureFromXPR(CFileBuffer& file, int nBytes)
@@ -493,7 +493,7 @@ static LPDIRECT3DTEXTURE8 ReadTextureFromXPR(CFileBuffer& file, int nBytes)
 }
 
 // =========================================================================
-// CreateObjects -- load all file entries from the archive
+// CreateObjects: load all file entries from the archive
 // =========================================================================
 
 void CXipFile::CreateObjects()
@@ -540,7 +540,7 @@ void CXipFile::CreateObjects()
 			break;
 
 		default:
-			// Generic data -- allocate and read raw bytes
+			// Generic data: allocate and read raw bytes
 			m_objects[i] = TheseusAllocMemory(m_filedata[i].m_size);
 			m_file.Read(m_objects[i], m_filedata[i].m_size);
 			break;
@@ -553,7 +553,7 @@ void CXipFile::CreateObjects()
 }
 
 // =========================================================================
-// Directory search -- binary search by name within the archive
+// Directory search: binary search by name within the archive
 // =========================================================================
 
 struct SEARCHXIP
@@ -706,7 +706,7 @@ void CXipFile::ReloadMeshBuffers()
 }
 
 // =========================================================================
-// Mesh cache eviction -- free the oldest unused mesh buffers
+// Mesh cache eviction: free the oldest unused mesh buffers
 // =========================================================================
 
 bool CleanupMeshCache()
@@ -768,7 +768,7 @@ bool CXipFile::IsReloading() const
 }
 
 // =========================================================================
-// CMeshRef -- render a mesh reference from the shared buffers
+// CMeshRef: render a mesh reference from the shared buffers
 // =========================================================================
 
 void CMeshRef::Render(bool bSetFVF)

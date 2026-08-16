@@ -58,6 +58,10 @@ patchelf --set-rpath '$ORIGIN/../lib' "$APP/usr/bin/theseus"
 cat > "$APP/AppRun" <<'EOF'
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "${0}")")"
+# Children inherit LD_LIBRARY_PATH, and a host /bin/sh that picks up our
+# bundled readline dies on an undefined symbol before it can exec steam.
+# Stash the caller's value so the launcher can put it back when it spawns.
+export THESEUS_HOST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH:-}"
 cd "${HERE}/usr/bin"
 exec "${HERE}/usr/bin/theseus" "$@"

@@ -69,7 +69,17 @@ bool CActiveFile::Fetch(const TCHAR *szURL, bool bSearchAppDir /*=false*/, bool 
 	}
 	else // file system
 	{
-		if (!((szURL[0] == '\\' && szURL[1] == '\\') || (szURL[0] != 0 && szURL[1] == ':')))
+		bool bAlreadyAbsolute = (szURL[0] == '\\' && szURL[1] == '\\') ||
+		                        (szURL[0] != 0 && szURL[1] == ':');
+#ifdef _DESKTOP
+		// A host path is absolute too, and the two tests above only know about
+		// UNC and drive letters. Without this a /Users/... or /home/... URL
+		// gets the current base URL glued to the front of it and never opens.
+		// Xbox paths are either "X:\" or a single leading backslash, so this
+		// can't fire there even if the guard ever comes off.
+		if (szURL[0] == '/') bAlreadyAbsolute = true;
+#endif
+		if (!bAlreadyAbsolute)
 		{
 			// Make it absolute...
 			TCHAR szBuf[MAX_PATH];

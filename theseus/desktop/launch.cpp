@@ -49,6 +49,16 @@ static bool IsSteamUrl(const char* s)
 }
 
 #ifndef _WIN32
+// Put back the LD_LIBRARY_PATH AppRun stashed, so a spawned /bin/sh doesn't
+// load the AppImage's bundled readline. No-op outside an AppImage.
+static void RestoreHostLibraryPath()
+{
+	const char* host = getenv("THESEUS_HOST_LD_LIBRARY_PATH");
+	if (!host) return;
+	if (*host) setenv("LD_LIBRARY_PATH", host, 1);
+	else       unsetenv("LD_LIBRARY_PATH");
+}
+
 // Build the argv for execlp/execl based on dispatch rules. Caller forks
 // first; this runs in the child and never returns on success.
 static void ExecLaunch(const char* spec)
@@ -100,6 +110,13 @@ static void TrimOuterQuotes(char* s)
 	memmove(s, s + 1, len - 2);
 	s[len - 2] = '\0';
 }
+
+#ifdef _WIN32
+// xboxfs.h macro-routes these through the Xbox drive translator. A launch
+// spec is a real Windows path by definition, so ask the OS directly.
+#undef GetFileAttributesA
+#undef GetFileAttributes
+#endif
 
 static bool IsExistingFile(const char* path)
 {
@@ -227,6 +244,7 @@ static bool Launch_DoSpawn(const char* expanded)
 	if (pid == 0)
 	{
 		if (haveWorkdir) (void)chdir(workdir);
+		RestoreHostLibraryPath();
 		ExecLaunch(spec);
 		_exit(127);
 	}

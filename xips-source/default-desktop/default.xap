@@ -2359,8 +2359,8 @@ function initialize()
 	ShowStartFTPInSettings = GetSavedBooleanValue("ShowInSettings","StartFTP");
 	ShowRebootInSettings = GetSavedBooleanValue("ShowInSettings","Reboot");
 	ShowShutdownInSettings = GetSavedBooleanValue("ShowInSettings","Shutdown");
-	
-	DriveLocations = new Array("C:\\","E:\\");
+
+	DriveLocations = new Array("C:\\","X:\\");
 	PartitionLocations = new Array("\\Device\\Harddisk0\\Partition2\\","\\Device\\Harddisk0\\Partition1\\");
 	bPartitionScanCompleted = GetSavedBooleanValue("ExtendedPartitions","PartitionScanCompleted");
 	if(bPartitionScanCompleted)
@@ -2480,7 +2480,10 @@ function StartScreenSaverView()
 {
 	if(CurrentViewpoint == theMainMenuViewpoint)
 	{
+		// Screensaver fires on a timer, so it can land before the inner
+		// Inline is wired. Both levels need checking, not just the outer.
 		if (theMainMenu.children.length() == 0) return;
+		if (theMainMenu.children[0].children.length() == 0) return;
 		var c = theMainMenu.children[0].children[0];
 		c.theMenuItems.SetAlpha(0);
 		c.select.SetAlpha(0);
@@ -3507,7 +3510,7 @@ function ExecuteFile(sPath)
 
 function RescanPartitions()
 {
-	DriveLocations = new Array("C:\\","E:\\");
+	DriveLocations = new Array("C:\\","X:\\");
 	PartitionLocations = new Array("\\Device\\Harddisk0\\Partition2\\","\\Device\\Harddisk0\\Partition1\\");
 	bPartitionScanCompleted = false;
 	bHDDInitialized = false;

@@ -68,6 +68,8 @@ extern char s_steamPath[512];   // user's Steam install root (contains steamapps
 extern char s_retroarchPath[512]; // user's RetroArch install root (contains retroarch + cores/)
 extern bool g_showRetroArchTab;
 extern bool g_showSteamTab;
+extern bool g_showEsdeTab;
+extern char s_esdePath[512];      // ES-DE data root, the folder holding gamelists/
 
 // ============================================================================
 // Restart Control (defined in sdl_main.cpp)

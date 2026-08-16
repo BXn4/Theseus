@@ -33,6 +33,67 @@ inline bool XboxFS_ResolveCaseInsensitive(char* resolvedPath, size_t maxLen) {
 
 // Translate an Xbox-style path to a local path
 // Returns a pointer to a static buffer (NOT thread-safe, but matches Xbox single-threaded model)
+#ifdef _WIN32
+// On Windows a real path and an Xbox drive spec look identical: both are
+// "C:\...". Everything AppPath hands back is now absolute, so without this a
+// genuine C:\Users\...\Data\shaders\dx11\vs_ff.bin gets rewritten into the
+// Configs folder and the whole scene silently loses its shaders. POSIX never
+// hits this since host paths start with a slash.
+// The dashboard's own trees. X: and Q: are ours outright; C: and E: are
+// shared with Windows, so only the listed subtrees are virtual. Game
+// categories match gameCats[] in virtual_games.h.
+inline bool XboxFS_IsVirtualTree(const char* p) {
+    if (!p || !p[0] || p[1] != ':') return false;
+    char drive = (char)toupper((unsigned char)p[0]);
+    if (drive == 'Q' || drive == 'X') return true;
+
+    static const char* kC[] = { "UIX Configs", "icons", "version",
+                                "Discord Presence", 0 };
+    static const char* kE[] = { "Games", "Applications", "Apps", "Homebrew",
+                                "Emulators", "Dashboards", "ES-DE", "TDATA",
+                                "UDATA", "Plex", "Jellyfin", "Xcloud", "Music", 0 };
+    const char** list = (drive == 'C') ? kC : (drive == 'E') ? kE : 0;
+    if (!list) return false;
+
+    const char* rest = p + 2;
+    while (*rest == '\\' || *rest == '/') rest++;
+    if (!*rest) return true;   // bare "E:\" root listing is still ours
+
+    for (int i = 0; list[i]; i++) {
+        size_t n = strlen(list[i]);
+        if (strncasecmp(rest, list[i], n) == 0 &&
+            (rest[n] == '\0' || rest[n] == '\\' || rest[n] == '/'))
+            return true;
+    }
+    return false;
+}
+
+inline bool XboxFS_IsHostPath(const char* p) {
+    // Already resolved through AppPath, so never translate it twice.
+    const char* roots[2] = { Plat_ShippedDir(), Plat_UserDataDir() };
+    for (int i = 0; i < 2; i++) {
+        const char* r = roots[i];
+        if (!r || !*r) continue;
+        size_t n = strlen(r), j = 0;
+        for (; j < n; j++) {
+            char a = p[j], b = r[j];
+            if (a == '\\') a = '/';
+            if (b == '\\') b = '/';
+            if (tolower((unsigned char)a) != tolower((unsigned char)b)) break;
+        }
+        if (j == n && (p[n] == '\0' || p[n] == '/' || p[n] == '\\')) return true;
+    }
+    // Virtual regardless of what sits on the host disk, so E:\Games still
+    // works with a real E: volume mounted.
+    if (XboxFS_IsVirtualTree(p)) return false;
+
+    // Anything else is a real Windows path. Identifiers the XAP hands us are
+    // always under one of the trees above, so an unlisted C: or E: subtree is
+    // a genuine install like C:\Program Files\Game\bin\game.exe.
+    return true;
+}
+#endif
+
 inline const char* XboxFS_TranslatePath(const char* xboxPath) {
     static char s_buf[512];
 
@@ -40,6 +101,13 @@ inline const char* XboxFS_TranslatePath(const char* xboxPath) {
         s_buf[0] = '\0';
         return s_buf;
     }
+
+#ifdef _WIN32
+    if (XboxFS_IsHostPath(xboxPath)) {
+        snprintf(s_buf, sizeof(s_buf), "%s", xboxPath);
+        return s_buf;
+    }
+#endif
 
     // Device-path form: "\Device\Harddisk0\PartitionN\..." Used by the
     // XAP `launch()` builtin to address Xbox HDD partitions. Map the
@@ -115,10 +183,10 @@ inline const char* XboxFS_TranslatePath(const char* xboxPath) {
             }
 
             if (!prefix) {
-                // F:, G:, H:, I:, R:, etc. -- no analog on desktop. Return
+                // F:, G:, H:, I:, R:, etc. No analog on desktop. Return
                 // an empty string so the caller's stat()/opendir()/fopen()/
                 // mkdir() all fail predictably. Critically, do NOT fall
-                // through to the "pass through unchanged" branch -- that
+                // through to the "pass through unchanged" branch, that
                 // would hand callers like Preloader_Mkdirp a literal
                 // "F:/Foo/Bar" path, and mkdir would happily create a
                 // directory named "F:" (which Finder helpfully renders as
@@ -135,7 +203,7 @@ inline const char* XboxFS_TranslatePath(const char* xboxPath) {
             }
 
             // Legacy aliases. Xbox shipped engine-level settings in
-            // Q:\System\config.ini (XBE config -- resolution, current skin)
+            // Q:\System\config.ini (XBE config: resolution, current skin)
             // and a separate XAP-level config in C:\UIX Configs\config.ini
             // (scene wiring). On desktop the engine-level settings are
             // collapsed into Configs/desktop.ini alongside CRT, library

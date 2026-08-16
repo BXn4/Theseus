@@ -1,5 +1,7 @@
 // Xbox drive letter to a real absolute directory under the user data dir:
-//   C: Configs   Q: Data   E: Library
+//   C: Configs   Q: Data   E: Library   X: Library
+// X is the desktop's own virtual drive and never collides with a real Windows
+// path, so new libraries use it. E stays mapped for libraries written before.
 // F: G: R: and the rest have no analog, so this returns NULL and the caller's
 // stat/opendir fails on its own. Also home to the mkdir helpers.
 
@@ -19,6 +21,7 @@ static inline const char* XboxFS_DriveToPrefix(char drive) {
     if (drive == 'C' || drive == 'c') return AppPath_Tree("Configs");
     if (drive == 'Q' || drive == 'q') return AppPath_Tree("Data");
     if (drive == 'E' || drive == 'e') return AppPath_Tree("Library");
+    if (drive == 'X' || drive == 'x') return AppPath_Tree("Library");
     return 0;
 }
 

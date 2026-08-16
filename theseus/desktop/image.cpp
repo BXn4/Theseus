@@ -135,6 +135,27 @@ LPDIRECT3DTEXTURE8 LoadTexture(const char *szURL, unsigned int width, unsigned i
 		LPDIRECT3DTEXTURE8 lpTexture = (LPDIRECT3DTEXTURE8)FindObjectInXIP(szBuf, szURL, XIP_TYPE_TEXTURE);
 		if (lpTexture != NULL)
 			return lpTexture;
+
+		// The XIP ships one name per group, so shell.xbx resolves to the
+		// cellwall.xbx that is actually in there.
+		char *slash = strrchr(szBuf, '/');
+		char *back  = strrchr(szBuf, '\\');
+		char *baseP = (slash > back ? slash : back);
+		baseP = baseP ? baseP + 1 : szBuf;
+
+		const char *candidates[4];
+		int nCandidates = SkinCandidatesFor(baseP, candidates, 4);
+		for (int i = 1; i < nCandidates; i++)   // 0 is the name we just tried
+		{
+			char aliasBuf[MAX_PATH];
+			size_t dirLen = (size_t)(baseP - szBuf);
+			memcpy(aliasBuf, szBuf, dirLen);
+			snprintf(aliasBuf + dirLen, sizeof(aliasBuf) - dirLen, "%s", candidates[i]);
+
+			lpTexture = (LPDIRECT3DTEXTURE8)FindObjectInXIP(aliasBuf, szURL, XIP_TYPE_TEXTURE);
+			if (lpTexture != NULL)
+				return lpTexture;
+		}
 	}
 
 	// === Fallback: Try original path with original extension ===

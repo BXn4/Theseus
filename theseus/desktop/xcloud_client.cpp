@@ -428,10 +428,9 @@ static void SetStreamPhase(const std::string& p)
 #if defined(THESEUS_HAVE_WEBRTC)
 
 // Decode a Teredo IPv6 address (2001:0:...) to the tunneled IPv4 + UDP port.
-// xCloud media servers hand back only a Teredo candidate, and no desktop OS
-// speaks Teredo, so we pull the real endpoint out and add it as a host
-// candidate ourselves. The client IPv4 and port are stored obfuscated (ones
-// complement), so we invert them. Mirrors xbox-xcloud-player's Teredo class.
+// xCloud hands back only a Teredo candidate and no desktop OS speaks Teredo,
+// so pull the real endpoint out and add it as a host candidate. IPv4 and port
+// are stored ones complement. Mirrors xbox-xcloud-player's Teredo class.
 // Input datachannel + handshake state, used by the render thread's
 // Xcloud_SendGamepad. Set up in the transport once the peer is negotiated.
 static std::shared_ptr<rtc::DataChannel> s_dcInput;

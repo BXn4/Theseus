@@ -151,7 +151,7 @@ void ParseLibraryFoldersVdf(const char* steamappsDir,
 			if (!q2) continue;
 			*q2 = '\0';
 			// Steam writes paths with escaped backslashes on Windows
-			// ("D:\\\\Library\\\\steamapps") -- collapse them to
+			// ("D:\\\\Library\\\\steamapps"), collapse them to
 			// single backslashes for our consumers.
 			char clean[512];
 			int ci = 0;
