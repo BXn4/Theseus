@@ -128,7 +128,7 @@ int UDataSynth_RebuildAll() {
 		const VirtualGame& g = g_vgames.games[i];
 		if (!g.valid || !g.titleID[0] || !g.name[0]) continue;
 
-		// Skip if a TitleMeta.xbx already exists -- user-supplied save
+		// Skip if a TitleMeta.xbx already exists. User-supplied save
 		// metadata wins over our synthesized stub.
 		char metaPath[512];
 		snprintf(metaPath, sizeof(metaPath), "%s", AppPathf("Library/UDATA/%s/TitleMeta.xbx", g.titleID));

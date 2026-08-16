@@ -196,7 +196,7 @@ void ImGui_ImplBgfx_RenderDrawData(ImDrawData* draw_data)
 
 		// Transient buffers: one upload per cmd list, drawn via
 		// per-cmd index sub-ranges below. Bail if the bgfx transient
-		// arena is full -- pathological case, drop the frame's
+		// arena is full. Pathological case, drop the frame's
 		// remaining ImGui rather than crash.
 		if (bgfx::getAvailTransientVertexBuffer(numVtx, g_bd.layout) < numVtx) break;
 		if (bgfx::getAvailTransientIndexBuffer(numIdx) < numIdx) break;

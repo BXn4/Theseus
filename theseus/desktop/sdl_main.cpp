@@ -26,6 +26,8 @@
 #include "launch.h"
 #include "app_paths.h"
 #include "display.h"
+#include "esde.h"
+#include "esde_vgames.h"
 #include <signal.h>
 
 #include <SDL_syswm.h>
@@ -54,8 +56,8 @@ bgfx::ShaderHandle theseus_bgfx_load_shader(const char* name)
 	}
 	char path[512];
 	snprintf(path, sizeof(path), "%s", AppPathf("Data/shaders/%s/%s.bin", sub, name));
-	// fopen is macro-routed through xboxfs.h's path translator; the
-	// relative path passes through unchanged, no Xbox-style remap.
+	// fopen is macro-routed through xboxfs.h's translator and AppPathf is
+	// absolute, so this relies on XboxFS_IsHostPath to skip the drive remap.
 	FILE* f = fopen(path, "rb");
 	if (!f) {
 		fprintf(stderr, "bgfx: shader file not found: %s\n", path);
@@ -361,6 +363,8 @@ char s_steamPath[512] = ""; // Steam install root (parent of steamapps/)
 char s_retroarchPath[512] = ""; // RetroArch install root (contains retroarch.exe + cores/)
 bool g_showRetroArchTab = true; // hides the Title Maker RetroArch tab; games stay in games.ini
 bool g_showSteamTab     = true; // hides the Title Maker Steam tab; games stay in games.ini
+bool g_showEsdeTab      = true; // hides the Title Maker ES-DE tab
+char s_esdePath[512]    = ""; // ES-DE data root, the folder holding gamelists/
 bool g_menuBarAutoHide  = true; // reveal the menu bar on a top edge mouseover
 bool g_padModeEnabled   = true; // LT+B can hand the pad to the tools
 bool g_padModeActive    = false; // starts off, or the dashboard is undrivable
@@ -407,6 +411,14 @@ void LoadDesktopSettings() {
             strncpy(g_qcowPath, line + 9, sizeof(g_qcowPath) - 1);
         else if (strncmp(line, "SteamPath=", 10) == 0)
             strncpy(s_steamPath, line + 10, sizeof(s_steamPath) - 1);
+        else if (strncmp(line, "EsdePath=", 9) == 0)
+            strncpy(s_esdePath, line + 9, sizeof(s_esdePath) - 1);
+        else if (strncmp(line, "ShowEsdeTab=", 12) == 0)
+            g_showEsdeTab = atoi(line + 12) != 0;
+        else if (strncmp(line, "RetroArchFullscreen=", 20) == 0)
+            g_retroarchFullscreen = atoi(line + 20) != 0;
+        else if (strncmp(line, "AudioBufferFrames=", 18) == 0)
+            g_audioBufferFrames = atoi(line + 18);
         else if (strncmp(line, "RetroArchPath=", 14) == 0)
             strncpy(s_retroarchPath, line + 14, sizeof(s_retroarchPath) - 1);
         else if (strncmp(line, "ShowRetroArchTab=", 17) == 0)
@@ -582,6 +594,10 @@ void SaveDesktopSettings() {
     fprintf(fp, "QcowPath=%s\n", g_qcowPath);
     fprintf(fp, "SteamPath=%s\n", s_steamPath);
     fprintf(fp, "RetroArchPath=%s\n", s_retroarchPath);
+    fprintf(fp, "EsdePath=%s\n",       s_esdePath);
+    fprintf(fp, "ShowEsdeTab=%d\n",    g_showEsdeTab ? 1 : 0);
+    fprintf(fp, "RetroArchFullscreen=%d\n", g_retroarchFullscreen ? 1 : 0);
+    fprintf(fp, "AudioBufferFrames=%d\n", g_audioBufferFrames);
     fprintf(fp, "ShowRetroArchTab=%d\n", g_showRetroArchTab ? 1 : 0);
     fprintf(fp, "ShowSteamTab=%d\n",     g_showSteamTab     ? 1 : 0);
     fprintf(fp, "StartupMode=%s\n", g_startupMode == 2 ? "development" : g_startupMode == 1 ? "dashboard" : "");
@@ -1333,6 +1349,16 @@ int main(int argc, char* argv[]) {
         freopen("CONOUT$", "w", stdout);
         freopen("CONOUT$", "w", stderr);
         freopen("CONIN$", "r", stdin);
+    } else {
+        // Launched from Explorer, so there's no console and every fprintf
+        // below goes nowhere. Tee to a log the user can actually send back.
+        char logPath[1024];
+        Plat_MkdirP(Plat_UserDataDir());
+        snprintf(logPath, sizeof(logPath), "%s/theseus.log", Plat_UserDataDir());
+        if (freopen(logPath, "w", stdout)) {
+            setvbuf(stdout, NULL, _IOLBF, 0);
+            _dup2(_fileno(stdout), _fileno(stderr));
+        }
     }
 
     //Milenko-Testing: I don't run windows, i googled this. don't know if it will work as intended.
@@ -1389,6 +1415,19 @@ int main(int argc, char* argv[]) {
 
     // Before anything reads a config.
     AppPaths_Init();
+
+    // Which roots we actually resolved, and whether the shipped-only shader
+    // tree survived the install. A missing one is a black screen with no
+    // other symptom, so say so here rather than 200 lines later.
+    {
+        fprintf(stdout, "[Paths] shipped  = %s\n", Plat_ShippedDir());
+        fprintf(stdout, "[Paths] userdata = %s\n", Plat_UserDataDir());
+        fprintf(stdout, "[Paths] games.ini= %s\n", AppPath("Configs/games.ini"));
+        const char* shaderDir = AppPath("Data/shaders");
+        struct stat sst;
+        if (stat(shaderDir, &sst) != 0)
+            fprintf(stderr, "[Paths] MISSING shader tree at %s (install is incomplete)\n", shaderDir);
+    }
 
 
     // This fixes compilation so it works for both GCC and clang
@@ -1800,6 +1839,12 @@ int main(int argc, char* argv[]) {
         SDL_Quit();
         return 1;
     }
+
+    // ES-DE import runs here, not before the window: it walks the rom tree,
+    // which on a network share with a cold cache is slow, and doing it any
+    // earlier means staring at no window at all. The launcher reads VGames
+    // lazily off the generation counter, so arriving late costs nothing.
+    if (g_showEsdeTab && s_esdePath[0]) EsdeVGames_Sync(s_esdePath);
 
     fprintf(stdout, "InitApp() succeeded - entering main loop\n");
 

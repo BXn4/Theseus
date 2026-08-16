@@ -22,7 +22,7 @@ extern void CycleLanguage();
 bool g_bInputEnable = true;
 
 // ============================================================================
-// JoySnapshot -- unified controller + keyboard state
+// JoySnapshot: unified controller + keyboard state
 // ============================================================================
 
 struct JoySnapshot {
@@ -436,12 +436,12 @@ void CJoystick::PollSDL(SDL_GameController* gc, JoySnapshot* out)
     SDL_Window* focusedWin = SDL_GetKeyboardFocus();
     bool mainHasFocus = (focusedWin == g_pSDLWindow);
     // Suppress kb->gamepad mapping while an on-screen keyboard popup is taking
-    // physical input -- otherwise typing 'q' fires LT, 'e' fires RT, backspace
+    // physical input. Otherwise typing 'q' fires LT, 'e' fires RT, backspace
     // fires both Backspace and B (back/cancel), etc.
     bool dashKbActive = (g_pActiveKeyboard_void() != NULL) && !g_bUseOnScreenKeyboard;
 
     // Escape always acts as B (back/cancel) when a dashboard keyboard popup is
-    // up -- otherwise there's no keyboard-only way out, since Backspace is now
+    // up. Otherwise there's no keyboard-only way out, since Backspace is now
     // routed into the text buffer instead of the gamepad layer.
     if (mainHasFocus && !imguiActive && dashKbActive)
     {
@@ -468,7 +468,7 @@ void CJoystick::PollSDL(SDL_GameController* gc, JoySnapshot* out)
         if (keys[SDL_SCANCODE_DOWN]) out->digitalDown[1] = true;
         if (keys[SDL_SCANCODE_LEFT]) out->digitalDown[2] = true;
         if (keys[SDL_SCANCODE_RIGHT]) out->digitalDown[3] = true;
-        // Don't map keyboard to Start -- Enter is A only (Start+A = double OnADown).
+        // Don't map keyboard to Start. Enter is A only (Start+A = double OnADown).
         // Backspace fires digital Back (which routes to OnBDown). The letter B
         // key fires analog B (also OnBDown). Each key fires OnBDown exactly
         // once per press; sharing one key between both would double-fire and
@@ -543,7 +543,7 @@ void CJoystick::ProcessMediaKeys()
 }
 
 // ============================================================================
-// Advance -- main input processing loop
+// Advance: main input processing loop
 // ============================================================================
 static bool EqualSnapshots(const JoySnapshot* a, const JoySnapshot* b)
 {

@@ -1849,7 +1849,7 @@ public:
             // BLIT_DST on Metal selects shared-storage mode that allows
             // CPU-side updates via updateTexture2D. Without it bgfx may
             // place the texture in private GPU memory and silently drop
-            // subsequent CPU writes — dynamic textures (audio visualizer,
+            // subsequent CPU writes. Dynamic textures (audio visualizer,
             // any async asset upload) freeze on the first frame.
             tex->m_bgfxTex = bgfx::createTexture2D(
                 (uint16_t)tex->m_width, (uint16_t)tex->m_height,

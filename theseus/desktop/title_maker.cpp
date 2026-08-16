@@ -3,10 +3,14 @@
 // the dashboard surfaces in TitleScanner). Desktop-only.
 
 #include "app_paths.h"
+#include "platform_env.h"
 #include "std.h"
 #include "dashapp.h"
 #include "panel_shared.h"
 #include "virtual_games.h"
+#include "esde.h"
+#include "esde_vgames.h"
+#include "icon_compress.h"
 #include "udata_synth.h"
 #include "xiso.h"
 #include "launchers/steam.h"
@@ -313,6 +317,39 @@ static void TM_OpenUrl(const char* url) {
     DesktopLaunch(url);
 }
 
+// Whole ES-DE library in one shot. 195 systems in their default file but only
+// a handful have roms, so this is a few hundred stats and a walk of what's
+// actually there. Scanned on demand and on Rescan, never per frame.
+#define ESDE_MAX_SYSTEMS 128
+#define ESDE_MAX_GAMES   16384
+
+static EsdeSystem s_esSystems[ESDE_MAX_SYSTEMS];
+static int        s_esSysCount = 0;
+static EsdeGame   s_esGames[ESDE_MAX_GAMES];
+static int        s_esGameCount = 0;
+static int        s_esOffset[ESDE_MAX_SYSTEMS];
+static char       s_esScannedFor[600] = "";
+
+static void EsdeRescan(const char* esdeRoot)
+{
+    s_esSysCount = 0;
+    s_esGameCount = 0;
+    snprintf(s_esScannedFor, sizeof(s_esScannedFor), "%s", esdeRoot ? esdeRoot : "");
+    // Same scan feeds the launcher, so refresh the injected entries too.
+    EsdeVGames_Sync(esdeRoot);
+    if (!esdeRoot || !*esdeRoot) return;
+
+    s_esSysCount = Esde_ScanSystems(esdeRoot, s_esSystems, ESDE_MAX_SYSTEMS);
+    for (int i = 0; i < s_esSysCount; i++) {
+        s_esOffset[i] = s_esGameCount;
+        int room = ESDE_MAX_GAMES - s_esGameCount;
+        if (room <= 0) { s_esSystems[i].gameCount = 0; continue; }
+        s_esSystems[i].gameCount =
+            Esde_ScanGames(esdeRoot, &s_esSystems[i], s_esGames + s_esGameCount, room);
+        s_esGameCount += s_esSystems[i].gameCount;
+    }
+}
+
 // Load <retroarchInstall>/assets/ozone/png/retroarch.png into an ImGui
 // texture, cached per resolved path. Returns 0 on failure.
 static unsigned long long TM_LoadRetroArchLogo(const char* installPath, int* outW, int* outH) {
@@ -322,10 +359,12 @@ static unsigned long long TM_LoadRetroArchLogo(const char* installPath, int* out
 
     if (outW) *outW = 0;
     if (outH) *outH = 0;
-    if (!installPath || !*installPath) return 0;
 
+    // Shipped with us: RetroArch's own assets/ozone path doesn't exist inside
+    // RetroArch.app, so on macOS this never resolved.
+    (void)installPath;
     char probe[800];
-    snprintf(probe, sizeof(probe), "%s/assets/ozone/png/retroarch.png", installPath);
+    snprintf(probe, sizeof(probe), "%s", AppPath("Configs/retroarchlogo.png"));
     if (strcmp(probe, s_path) == 0) {
         if (outW) *outW = s_w;
         if (outH) *outH = s_h;
@@ -764,6 +803,8 @@ void RenderTitleMaker() {
     if (ImGui::CollapsingHeader("Optional Tabs")) {
         if (ImGui::Checkbox("Steam",     &g_showSteamTab))     SaveDesktopSettings();
         if (ImGui::Checkbox("RetroArch", &g_showRetroArchTab)) SaveDesktopSettings();
+        ImGui::SameLine();
+        if (ImGui::Checkbox("ES-DE",     &g_showEsdeTab))      SaveDesktopSettings();
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
             "Hiding a tab only hides its authoring UI. Existing entries stay listed in Main.");
     }
@@ -1706,6 +1747,13 @@ void RenderTitleMaker() {
                 if (s_retroarchPath[0]) s_raPathBrowser.SetPwd(s_retroarchPath);
                 s_raPathBrowser.Open();
             }
+            if (ImGui::Checkbox("Launch fullscreen", &g_retroarchFullscreen))
+                SaveDesktopSettings();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Passes -f when launching RetroArch, here and from ES-DE.\n"
+                                  "Borderless or exclusive follows RetroArch's own\n"
+                                  "Settings > Video > Windowed Fullscreen Mode.");
+
             s_raPathBrowser.Display();
             if (s_raPathBrowser.HasSelected()) {
                 std::string sel = s_raPathBrowser.GetSelected().string();
@@ -2091,6 +2139,133 @@ void RenderTitleMaker() {
 
         ImGui::EndTabItem();
     } // RetroArch tab
+
+    // ---- ES-DE ----
+    // Reads an existing EmulationStation Desktop Edition setup in place. We
+    // never move or rewrite their files: their library stays theirs.
+    if (g_showEsdeTab && ImGui::BeginTabItem("ES-DE")) {
+        {
+            static GuiTexture* s_esLogoTex = NULL;
+            static int s_esLogoW = 0, s_esLogoH = 0;
+            static bool s_esLogoTried = false;
+            if (!s_esLogoTried) {
+                s_esLogoTried = true;
+                int w = 0, h = 0, ch = 0;
+                unsigned char* px = stbi_load(AppPath("Configs/esdelogo.png"), &w, &h, &ch, 4);
+                if (px) {
+                    s_esLogoTex = GuiTextureCreate(w, h, px);
+                    stbi_image_free(px);
+                    s_esLogoW = w; s_esLogoH = h;
+                }
+            }
+            const float headerH = 64.0f;
+            if (s_esLogoTex && s_esLogoH > 0) {
+                const float sc = headerH / (float)s_esLogoH;
+                ImGui::Image((ImTextureID)(intptr_t)GuiTextureImId(s_esLogoTex),
+                             ImVec2((float)s_esLogoW * sc, headerH));
+                ImGui::SameLine();
+            }
+            ImGui::BeginGroup();
+            ImGui::TextUnformatted("EmulationStation Desktop Edition");
+            ImGui::TextDisabled("Point at your ES-DE data folder, the one holding gamelists/");
+            ImGui::EndGroup();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("ES-DE folder:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 170.0f);
+        ImGui::InputText("##esdepath", s_esdePath, sizeof(s_esdePath));
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Find##esde")) {
+            const char* home = PlatformHomeDir();
+            char probe[600];
+            snprintf(probe, sizeof(probe), "%s/ES-DE", home);
+            struct stat st;
+            if (stat(probe, &st) == 0 && S_ISDIR(st.st_mode)) {
+                strncpy(s_esdePath, probe, sizeof(s_esdePath) - 1);
+                SaveDesktopSettings();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Save##esde")) SaveDesktopSettings();
+
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Rescan##esde")) s_esScannedFor[0] = '\0';
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Compress Art##esde")) {
+            IconCompressResult r = Icons_Compress(256, 85);
+            double mbBefore = r.bytesBefore / 1048576.0;
+            double mbAfter  = r.bytesAfter  / 1048576.0;
+            snprintf(s_statusMsg, sizeof(s_statusMsg),
+                     "Compressed %d of %d icons: %.0f MB -> %.0f MB",
+                     r.converted, r.scanned, mbBefore, mbAfter);
+            s_statusTime = 6.0f;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Scraped box art arrives at print resolution and gets drawn\n"
+                              "on a small orb. Re-encodes Configs/icons to 256px JPEG.\n"
+                              "Safe to re-run; already-small art is left alone.");
+
+        ImGui::Spacing();
+        if (s_esdePath[0]) {
+            if (strcmp(s_esScannedFor, s_esdePath) != 0) EsdeRescan(s_esdePath);
+
+            if (s_esSysCount <= 0) {
+                ImGui::TextDisabled("Nothing found. ES-DE keeps its roms in %s",
+                                    Esde_RomRoot(s_esdePath));
+            } else {
+                ImGui::Text("%d system%s, %d game%s.",
+                            s_esSysCount,  s_esSysCount  == 1 ? "" : "s",
+                            s_esGameCount, s_esGameCount == 1 ? "" : "s");
+                ImGui::Spacing();
+
+                ImGui::BeginChild("##esdetree", ImVec2(0, 0), true);
+                for (int i = 0; i < s_esSysCount; i++) {
+                    const EsdeSystem& sys = s_esSystems[i];
+                    char label[256];
+                    snprintf(label, sizeof(label), "%s  (%d)###essys%d",
+                             sys.fullname, sys.gameCount, i);
+                    if (!ImGui::TreeNode(label)) continue;
+
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", sys.romdir);
+
+                    const EsdeGame* games = s_esGames + s_esOffset[i];
+                    // Loose roms first, then a node per subfolder. ES-DE shows
+                    // folders the same way, so this matches what they expect.
+                    for (int g = 0; g < sys.gameCount; g++)
+                        if (!games[g].folder[0]) ImGui::BulletText("%s", games[g].name);
+
+                    for (int g = 0; g < sys.gameCount; g++) {
+                        if (!games[g].folder[0]) continue;
+                        bool seen = false;
+                        for (int p = 0; p < g && !seen; p++)
+                            seen = (strcmp(games[p].folder, games[g].folder) == 0);
+                        if (seen) continue;
+
+                        char fLabel[256];
+                        snprintf(fLabel, sizeof(fLabel), "%s###esfold%d_%d",
+                                 games[g].folder, i, g);
+                        if (ImGui::TreeNode(fLabel)) {
+                            for (int k = 0; k < sys.gameCount; k++)
+                                if (strcmp(games[k].folder, games[g].folder) == 0)
+                                    ImGui::BulletText("%s", games[k].name);
+                            ImGui::TreePop();
+                        }
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::EndChild();
+            }
+        }
+
+        ImGui::EndTabItem();
+    } // ES-DE tab
 
     ImGui::EndTabBar();
 

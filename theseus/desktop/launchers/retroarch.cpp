@@ -10,6 +10,7 @@
 
 #include "launcher.h"
 #include "retroarch.h"
+#include "esde.h"   // g_retroarchFullscreen
 
 #include <cstdio>
 #include <cstdlib>
@@ -123,13 +124,21 @@ bool Build(const char* spec, char* outCmd, size_t outSize) {
 	else
 		snprintf(corePath, sizeof(corePath), "cores%c%s", kPathSep, core);
 
+	// -f forces fullscreen for this run without touching retroarch.cfg, and
+	// their video_windowed_fullscreen setting still picks borderless.
+	const char* fs = g_retroarchFullscreen ? " -f" : "";
+	const char* ovr = RetroArch_OverrideConfig();
+	char extra[900];
+	snprintf(extra, sizeof(extra), "%s%s%s%s", fs,
+	         ovr[0] ? " --appendconfig \"" : "", ovr[0] ? ovr : "", ovr[0] ? "\"" : "");
+
 #ifdef __APPLE__
 	// macOS: the cores dir is in ~/Library/Application Support/RetroArch,
 	// but the binary is inside /Applications/RetroArch.app. Launch via
 	// `open -na RetroArch --args ...` so we don't hardcode the bundle path.
 	int n = snprintf(outCmd, outSize,
-	                 "open -na RetroArch --args -L \"%s\" \"%s\"",
-	                 corePath, content);
+	                 "open -na RetroArch --args%s -L \"%s\" \"%s\"",
+	                 extra, corePath, content);
 #else
 	char exePath[1024];
 	if (install[0])
@@ -138,8 +147,8 @@ bool Build(const char* spec, char* outCmd, size_t outSize) {
 		snprintf(exePath, sizeof(exePath), "%s", kRetroArchExe);
 
 	int n = snprintf(outCmd, outSize,
-	                 "\"%s\" -L \"%s\" \"%s\"",
-	                 exePath, corePath, content);
+	                 "\"%s\"%s -L \"%s\" \"%s\"",
+	                 exePath, extra, corePath, content);
 #endif
 	return n > 0 && (size_t)n < outSize;
 }

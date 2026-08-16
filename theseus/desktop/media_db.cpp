@@ -745,11 +745,9 @@ public:
 		// for shows the wrapper drills into seasons; this isn't called.
 	}
 
-	// Latched pulse: media_ui::MediaUI_StopFullscreen sets g_mediaPlaybackExited
-	// when the user leaves video playback. The XAP wrapper polls this from the
-	// action menu's input handlers (and OnArrival) and runs ShowMediaActionMenu
-	// to reset scene-local state (highlight, action-state machine, etc.) so
-	// that picking another title plays correctly. Read clears the flag.
+	// Latched pulse, set when the user leaves video playback. The XAP action
+	// menu polls it and re-runs ShowMediaActionMenu to reset scene state.
+	// Reading clears it.
 	int ConsumePlaybackExited()
 	{
 		extern int g_mediaPlaybackExited;

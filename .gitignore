@@ -19,7 +19,9 @@ Profile_FastCap/
 Release_LTCG/
 obj/
 ddk/
-xdk/
+# No trailing slash: theseus/xdk is usually a symlink to a local XDK tree,
+# and a dir-only pattern lets the link itself get committed.
+xdk
 build-env/
 
 # Reference builds
@@ -62,3 +64,7 @@ Data/Xips/*/
 # theseus/third-party/{bx,bimg,bgfx}/; the .build/ output is machine specific
 # and rebuilds locally.
 theseus/third-party/bgfx/.build/
+
+# xiptool writes <folder>.xip next to the source folder on create. The packed
+# artifact belongs in Data/Xips/, not here.
+xips-source/*.xip

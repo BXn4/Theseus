@@ -8,12 +8,14 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 #include <sys/stat.h>
 #include "xboxfs_drive.h"
 
 // Roomy enough for a full local library plus a signed-in xCloud/Game Pass
-// account injected at boot (see xcloud_vgames.cpp).
-#define VGAMES_MAX 2048
+// account injected at boot (see xcloud_vgames.cpp), and now an imported ES-DE
+// library on top: a real rom collection runs to thousands of files.
+#define VGAMES_MAX 16384
 #define VGAMES_INI AppPath("Configs/games.ini")
 #define VGAMES_ICONS AppPath_Tree("Configs/icons")
 
@@ -23,6 +25,13 @@ struct VirtualGame {
     char launch[512];
     char drive[4];         // "E", "F", "G"
     char category[32];     // "Games", "Applications", "Homebrew", ...
+    // Optional folder path under the category, "/" separated, e.g.
+    // "Nintendo Entertainment System/Mario Series". Empty means the title
+    // sits at the top of its category, which is everything that predates this.
+    char group[128];
+    // Injected at boot from somebody else's library (ES-DE today). Lives only
+    // as long as the app does, same deal as the streaming entries.
+    bool transient;
     bool valid;
 };
 
@@ -92,6 +101,8 @@ inline void VGames_Load() {
             strncpy(cur->drive, val, sizeof(cur->drive) - 1);
         else if (strcmp(key, "Category") == 0)
             strncpy(cur->category, val, sizeof(cur->category) - 1);
+        else if (strcmp(key, "Group") == 0)
+            strncpy(cur->group, val, sizeof(cur->group) - 1);
     }
     fclose(fp);
     g_vgames.generation++;
@@ -114,12 +125,15 @@ inline void VGames_Save() {
     for (int i = 0; i < g_vgames.count; i++) {
         VirtualGame& g = g_vgames.games[i];
         if (!g.valid) continue;
-        if (VGames_IsStreaming(g)) continue;   // xCloud/remote-play entries are live, never persisted
+        if (VGames_IsStreaming(g) || g.transient) continue;   // live entries are never persisted
         fprintf(fp, "[%s]\n", g.name);
         fprintf(fp, "TitleID=%s\n", g.titleID);
         fprintf(fp, "Launch=%s\n", g.launch);
         fprintf(fp, "Drive=%s\n", g.drive);
         fprintf(fp, "Category=%s\n", g.category);
+        // Only written when set, so a library with no folders reads back
+        // byte for byte the way it always did.
+        if (g.group[0]) fprintf(fp, "Group=%s\n", g.group);
         fprintf(fp, "\n");
     }
     fclose(fp);
@@ -135,11 +149,22 @@ inline int VGames_Add(const char* name, const char* titleID, const char* launch,
     strncpy(g.name, name, sizeof(g.name) - 1);
     strncpy(g.titleID, titleID, sizeof(g.titleID) - 1);
     strncpy(g.launch, launch, sizeof(g.launch) - 1);
-    strncpy(g.drive, drive ? drive : "E", sizeof(g.drive) - 1);
+    strncpy(g.drive, drive ? drive : "X", sizeof(g.drive) - 1);
     strncpy(g.category, category ? category : "Games", sizeof(g.category) - 1);
     g.valid = true;
     g_vgames.generation++;
     return g_vgames.count++;
+}
+
+// Set the folder path after the fact, so VGames_Add keeps its five arguments
+// and every existing caller stays put. Pass NULL or "" to flatten.
+inline void VGames_SetGroup(int idx, const char* group) {
+    if (idx < 0 || idx >= g_vgames.count) return;
+    VirtualGame& g = g_vgames.games[idx];
+    if (group && group[0]) strncpy(g.group, group, sizeof(g.group) - 1);
+    else                   g.group[0] = 0;
+    g.group[sizeof(g.group) - 1] = 0;
+    g_vgames.generation++;
 }
 
 inline void VGames_Update(int idx, const char* name, const char* titleID,
@@ -179,7 +204,7 @@ inline void VGames_DeleteByName(const char* name) {
     if (fp) {
         for (int i = 0; i < g_vgames.count; i++) {
             if (!g_vgames.games[i].valid) continue;
-            if (VGames_IsStreaming(g_vgames.games[i])) continue;
+            if (VGames_IsStreaming(g_vgames.games[i]) || g_vgames.games[i].transient) continue;
             fprintf(fp, "[%s]\n", g_vgames.games[i].name);
             fprintf(fp, "TitleID=%s\n", g_vgames.games[i].titleID);
             fprintf(fp, "Launch=%s\n", g_vgames.games[i].launch);
@@ -225,19 +250,29 @@ inline int VGames_MatchFolder(const char* localPath) {
 // FindFirstFile shims.
 inline bool VGames_ParseDir(const char* dirPath, char* outDrive, char* outCat, size_t catLen) {
     if (!dirPath || !outDrive || !outCat || catLen < 2) return false;
-    static const struct { const char* prefix; char drive; } kMap[] = {
-        { "Library", 'E' }, { "Data", 'Q' }, { "Configs", 'C' }
+    static const struct { const char* tree; char drive; } kMap[] = {
+        { "Library", 'X' }, { "Data", 'Q' }, { "Configs", 'C' }
     };
     const char* p = NULL;
     outDrive[0] = 0;
+    // Anchored at the resolved root, not searched for. Both platforms' user
+    // data roots contain the words we're matching ("AppData" on Windows,
+    // "Library/Application Support" on macOS), so a scan finds the wrong one.
     for (size_t i = 0; i < sizeof(kMap) / sizeof(kMap[0]); i++) {
-        const char* hit = strstr(dirPath, kMap[i].prefix);
-        if (!hit) continue;
-        size_t plen = strlen(kMap[i].prefix);
-        if (hit[plen] != '\\' && hit[plen] != '/') continue;
+        const char* root = AppPath_Tree(kMap[i].tree);
+        if (!root || !*root) continue;
+        size_t n = strlen(root), j = 0;
+        for (; j < n; j++) {
+            char a = dirPath[j], b = root[j];
+            if (a == '\\') a = '/';
+            if (b == '\\') b = '/';
+            if (tolower((unsigned char)a) != tolower((unsigned char)b)) break;
+        }
+        if (j != n) continue;
+        if (dirPath[n] != '/' && dirPath[n] != '\\') continue;
         outDrive[0] = kMap[i].drive;
         outDrive[1] = 0;
-        p = hit + plen + 1;
+        p = dirPath + n + 1;
         break;
     }
     if (!p) return false;
@@ -247,11 +282,22 @@ inline bool VGames_ParseDir(const char* dirPath, char* outDrive, char* outCat, s
         outCat[ci++] = *p++;
     outCat[ci] = 0;
 
-    static const char* gameCats[] = { "Games", "Applications", "Apps", "Homebrew", "Emulators", "Dashboards" };
+    static const char* gameCats[] = { "Games", "Applications", "Apps", "Homebrew", "Emulators", "Dashboards", "ES-DE" };
     for (size_t i = 0; i < sizeof(gameCats) / sizeof(gameCats[0]); i++) {
         if (strcasecmp(outCat, gameCats[i]) == 0) return true;
     }
     return false;
+}
+
+// X and E both resolve to Library, so a library written before the X: move
+// still answers a request for X.
+inline bool VGames_SameDrive(const char* a, const char* b) {
+    if (!a || !b) return false;
+    char ca = (char)toupper((unsigned char)a[0]);
+    char cb = (char)toupper((unsigned char)b[0]);
+    if (ca == 'E') ca = 'X';
+    if (cb == 'E') cb = 'X';
+    return ca == cb;
 }
 
 inline int VGames_GetForDirectory(const char* drive, const char* category,
@@ -260,7 +306,7 @@ inline int VGames_GetForDirectory(const char* drive, const char* category,
     int count = 0;
     for (int i = 0; i < g_vgames.count && count < maxOut; i++) {
         if (!g_vgames.games[i].valid) continue;
-        if (strcasecmp(g_vgames.games[i].drive, drive) == 0 &&
+        if (VGames_SameDrive(g_vgames.games[i].drive, drive) &&
             strcasecmp(g_vgames.games[i].category, category) == 0) {
             outIndices[count++] = i;
         }

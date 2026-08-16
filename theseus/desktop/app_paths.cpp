@@ -111,6 +111,9 @@ static bool IsUserOwned(const char* logical) {
 }
 
 static void CopyFile(const char* src, const char* dst) {
+    // Never overwrite: the user's copy wins, we only fill gaps.
+    struct stat exists;
+    if (stat(dst, &exists) == 0) return;
     FILE* in = fopen(src, "rb");
     if (!in) return;
     FILE* out = fopen(dst, "wb");
@@ -163,10 +166,9 @@ static void CopyTree(const char* src, const char* dst) {
 static void SeedTree(const char* rel) {
     char dst[1024], src[1024];
     snprintf(dst, sizeof(dst), "%s/%s", Plat_UserDataDir(), rel);
-    struct stat st;
-    if (stat(dst, &st) == 0) return;
     snprintf(src, sizeof(src), "%s/%s", Plat_ShippedDir(), rel);
-    if (stat(src, &st) == 0) CopyTree(src, dst);
+    struct stat st;
+    if (stat(src, &st) == 0) CopyTree(src, dst);   // fills gaps, never clobbers
     else                     Plat_MkdirP(dst);
 }
 

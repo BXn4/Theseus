@@ -1,6 +1,6 @@
 // tmdb.cpp: in-process TMDB v3 client. libcurl HTTPS GETs, slug-keyed
 // JSON cache at Library/TMDB/. Targeted field extractor instead of a
-// full JSON parser -- TMDB shapes are stable and we want ~5 fields.
+// full JSON parser. TMDB shapes are stable and we want ~5 fields.
 
 #include "app_paths.h"
 #include "tmdb.h"

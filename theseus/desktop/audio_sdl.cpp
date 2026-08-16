@@ -407,17 +407,28 @@ static int MasterScaled(int v)
     return s;
 }
 
+// Frames per mixer chunk, from desktop.ini AudioBufferFrames.
+int g_audioBufferFrames = 1024;
+
 int DashAudio_Init(void)
 {
     if (s_initialized) return 0;
 
-    // 4096-sample buffer (~93ms at 44.1kHz). Higher than ideal for game
-    // audio latency, but the dashboard isn't latency-sensitive, and the
-    // bigger buffer keeps audio stable when the scan thread / libmpv decode
-    // / TMDB curl bursts hog CPU. Smaller buffer = popping under load.
-    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 4096) < 0) {
+    // SDL queues a second chunk, so felt latency is double this.
+    int frames = g_audioBufferFrames;
+    if (frames < 256)  frames = 256;
+    if (frames > 8192) frames = 8192;
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, frames) < 0) {
         fprintf(stderr, "[Audio] Mix_OpenAudio failed: %s\n", Mix_GetError());
         return -1;
+    }
+
+    {
+        int freq = 0, chans = 0;
+        Uint16 fmt = 0;
+        Mix_QuerySpec(&freq, &fmt, &chans);
+        fprintf(stderr, "[Audio] mixer chunk %d frames (~%.0f ms), device %d Hz %d ch\n",
+                frames, frames * 1000.0 / 44100.0, freq, chans);
     }
 
     // Enable MP3, OGG, FLAC decoding

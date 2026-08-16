@@ -112,7 +112,7 @@ function UpdateTrackList()
 				c.TrackNames.children[i].SetTranslation(-0.34, parseTrans(Trans,"Y"), parseTrans(Trans,"Z"));
 				c.TrackNames.children[i].children[1].visible = true;
 				if(sFileType[n] == "folder" | bInRoot)
-				{ 
+				{
 					c.TrackNames.children[i].children[1].children[0].appearance.texture.url = "folder.xbx";
 				}
 				else
@@ -193,9 +193,25 @@ function UpdateTrackList()
 	else
 	{
 		c.SubMenuHeader.SetScale(0.144000, 0.134000,0.134000);
-		c.SubMenuHeaderText.width = -15;    
-		if (nTracks0 == 1)
-		{    
+		c.SubMenuHeaderText.width = -15;
+		// Inside a category folder the path beats the count: knowing you're in
+		// Emulators/NES matters more than knowing there are nine of them.
+		var sGroup = "";
+		if(bInTitleList & (bRecentToggled == false)) sGroup = theGamesCollection.GetGroupPath();
+		if(sGroup != "")
+		{
+			// PathEllipsis splits on backslashes, so trim by hand here and
+			// keep the tail: the folder you just walked into is the useful bit.
+			if(sGroup.length() > 27)
+			{
+				var arrG = Split(sGroup,"/");
+				sGroup = ".../" + arrG[arrG.length - 1];
+				if(sGroup.length() > 27) sGroup = sGroup.substr(0,25) + "...";
+			}
+			c.SubMenuHeaderText.text = sGroup;
+		}
+		else if (nTracks0 == 1)
+		{
 			c.SubMenuHeaderText.text = nTracks0 + " " + Translate("Title");
 		}
 		else
@@ -328,6 +344,15 @@ function LoadMenuItems()
 			TotalSections = TotalSections + 1;
 		}
 	}
+	// ES-DE is bolted on, not configured: it shows up only while an install is
+	// pointed at and actually has titles, and vanishes the moment it doesn't.
+	// Nobody has to add it to [LauncherMenu] and nobody has to remove it.
+	if(theGamesCollection.CountInCategory("ES-DE") > 0)
+	{
+		arrMenuNames[TotalSections] = "ES-DE";
+		arrMenuPaths[TotalSections] = "ES-DE";
+		TotalSections = TotalSections + 1;
+	}
 	arrMenuNames[TotalSections] = Translate("File Browser");
 	arrMenuPaths[TotalSections] = Translate("Xbox Root");
 	TotalSections = TotalSections + 1;
@@ -442,8 +467,8 @@ function LaunchItem(x,y)
 	var TitleLocation = Split(y,";");
 	var FolderName = TitleLocation[0];
 	var sDrive = DriveLocations[StringToNumber(TitleLocation[1])];
-	if((sDrive != "C:\\" & sDrive != "E:\\" & sDrive != "R:\\") & bHDDInitialized == false) 
-	{  //The title is not on C or E so set the background before continuing.
+	if((sDrive != "C:\\" & sDrive != "X:\\" & sDrive != "E:\\" & sDrive != "R:\\") & bHDDInitialized == false)
+	{  //The title is not on a local drive so set the background before continuing.
 		sLocation = x;
 		sFolder = y;
 		bLaunchItem = true;
@@ -489,10 +514,37 @@ function RefreshTitleList()
 	   }
 	   else
 	   {
-		   TempTitleList = GetTitleList(arrMenuNames[nCurLauncherItem0]);
+		   // Refill in place so a refresh keeps us in the current folder.
+		   TempTitleList = FillTitleRows();
 	   }
-	   UpdateTrackList(); 
+	   UpdateTrackList();
 	}
+}
+
+// Build the rows for whatever the collection is currently pointed at, folder
+// or category. Kept separate from GetTitleList so a refresh doesn't throw
+// away the folder we've drilled into.
+function FillTitleRows()
+{
+	var TitleList = new Array;
+	sFileType = new Array;
+	var n = theGamesCollection.GetCount();
+	for(var i = 0; i < n; i = i + 1)
+	{
+		// "FolderName;driveIdx;pathIdx". VGames sits at index 1 of
+		// DriveLocations, the X: virtual drive, and always has exactly
+		// one canonical subdir.
+		TitleList[i] = theGamesCollection.GetTitle(i) + ";1;0";
+		if(theGamesCollection.IsFolder(i) == 1)
+		{
+			sFileType[i] = "folder";
+		}
+		else
+		{
+			sFileType[i] = "title";
+		}
+	}
+	return TitleList;
 }
 
 function GetTitleList(mnuName)
@@ -502,18 +554,7 @@ function GetTitleList(mnuName)
 	// and required Y-to-refresh. The node auto-refreshes off VGames'
 	// generation counter, so this is always live.
 	theGamesCollection.SetCategory(mnuName);
-	var TitleList = new Array;
-	var n = theGamesCollection.GetCount();
-	for(var i = 0; i < n; i = i + 1)
-	{
-		// Format matches what cache.ini used to emit so LaunchItem keeps
-		// working unchanged: "FolderName;driveIdx;pathIdx". VGames lives
-		// on drive E (index 1 in DriveLocations C/E/F/...) and the title's
-		// relative subdir is always the first split of CurFillDir (Xbox
-		// scanned multiple alt-named dirs; desktop just has one canonical).
-		TitleList[i] = theGamesCollection.GetTitle(i) + ";1;0";
-	}
-	return TitleList;
+	return FillTitleRows();
 }
 
 DEF theLauncher Level
@@ -722,10 +763,20 @@ DEF theLauncher Level
 			}
 			else
 			{
+				// Category folder: drill in rather than launch.
+				if(theGamesCollection.IsFolder(nPlayCursor0) == 1)
+				{
+					theGamesCollection.EnterFolder(nPlayCursor0);
+					TempTitleList = FillTitleRows();
+					nPlayScroll0 = 0;
+					nPlayCursor0 = 0;
+					UpdateTrackList();
+					return;
+				}
 				LaunchItem(CurFillDir,TempTitleList[nPlayCursor0]);
 			}
 		}
-		
+
 		function OnXDown()
 		{
 			if(bInRecentTitles) return;
@@ -821,7 +872,7 @@ DEF theLauncher Level
 				}
 				else
 				{
-					TempTitleList = GetTitleList(arrMenuNames[nCurLauncherItem0]);
+					TempTitleList = FillTitleRows();
 				}
 				nPlayScroll0 = nPlayScroll1;
 				nPlayCursor0 = nPlayCursor1;
@@ -830,6 +881,21 @@ DEF theLauncher Level
 				bRecentToggled = false;
 				UpdateTrackList();
 				return;
+			}
+
+			// Inside a category folder: climb one level instead of leaving.
+			// Returns 0 once we're back at the top of the category, and then
+			// the check below takes us out to the menu as it always did.
+			if (bInTitleList & (bInBrowser == false) & (bRecentToggled == false))
+			{
+				if (theGamesCollection.GoUpFolder() == 1)
+				{
+					TempTitleList = FillTitleRows();
+					nPlayScroll0 = 0;
+					nPlayCursor0 = 0;
+					UpdateTrackList();
+					return;
+				}
 			}
 
 			// Drilled into a title list or file browser: back to launcher menu

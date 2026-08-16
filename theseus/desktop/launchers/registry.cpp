@@ -28,7 +28,7 @@ void Launcher_Register(const Launcher* l) {
 
 const Launcher* Launcher_FindForSpec(const char* spec) {
 	if (!spec || !*spec) return 0;
-	// Walk by priority -- lower runs first, so a scheme-specific module
+	// Walk by priority, lower runs first, so a scheme-specific module
 	// claims ahead of any broader one.
 	const Launcher* best = 0;
 	int bestPrio = 0;

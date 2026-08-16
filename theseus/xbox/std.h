@@ -80,7 +80,7 @@ typedef char FSCHAR;
 #define EXTERN_C extern "C"
 
 // Xbox debug CRT overrides operator new for leak tracking.
-// Desktop doesn't use this -- it has its own tooling.
+// Desktop doesn't use this, it has its own tooling.
 #if defined(_XBOX) && defined(_DEBUG)
 #define new new(_NORMAL_BLOCK, __FILE__, __LINE__)
 #endif
@@ -109,7 +109,7 @@ typedef char FSCHAR;
 #define CopyChars(dest, src, count) CopyMemory(dest, src, (count) * sizeof (TCHAR))
 #endif
 
-// Node property offset -- uses 'this' so it only works inside member functions.
+// Node property offset: uses 'this' so it only works inside member functions.
 // Both platforms need this for the XAP property system.
 // Conflicts with the standard offsetof(type, member) from <cstddef>.
 #undef offsetof
